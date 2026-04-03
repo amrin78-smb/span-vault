@@ -1,0 +1,33 @@
+{
+  "name": "spanvault-backend",
+  "version": "1.0.0",
+  "description": "SpanVault WAN Monitoring System - Backend",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "snmp": "ts-node src/services/snmp/poller.ts",
+    "icmp": "ts-node src/services/icmp/monitor.ts",
+    "flow": "ts-node src/services/flow/collector.ts",
+    "aggregator": "ts-node src/services/aggregator/worker.ts"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "pg": "^8.11.3",
+    "net-snmp": "latest",
+    "ping": "^0.4.4",
+    "winston": "^3.11.0",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/pg": "^8.10.9",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2",
+    "ts-node": "^10.9.2"
+  }
+}
