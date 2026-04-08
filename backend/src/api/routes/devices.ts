@@ -5,7 +5,6 @@ import { query, queryOne } from '../../db';
 
 const router = Router();
 
-// GET /api/devices - List all devices with site info
 router.get('/', async (_req: Request, res: Response) => {
   try {
     const devices = await query(
@@ -20,7 +19,6 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
-// GET /api/devices/:id - Single device with interfaces
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const device = await queryOne(
@@ -37,7 +35,6 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/devices - Add a new device
 router.post('/', async (req: Request, res: Response) => {
   const { hostname, ip_address, site_id, vendor, model, device_type, priority, community } = req.body;
   if (!hostname || !ip_address) {
@@ -48,23 +45,33 @@ router.post('/', async (req: Request, res: Response) => {
       `INSERT INTO devices (hostname, ip_address, site_id, vendor, model, device_type, priority, community)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
-      [hostname, ip_address, site_id, vendor, model, device_type || 'router', priority || 'normal', community || 'public']
+      [hostname, ip_address, site_id || null, vendor, model, device_type || 'router', priority || 'normal', community || 'public']
     );
+    const deviceId = rows[0].id;
 
-    // Also add as ICMP target automatically
     await query(
       `INSERT INTO icmp_targets (device_id, ip_address, label, priority)
        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [rows[0].id, ip_address, hostname, priority || 'normal']
+      [deviceId, ip_address, hostname, priority || 'normal']
     );
 
-    res.status(201).json({ id: rows[0].id, message: 'Device added' });
+    const nodeCount = await query<{ count: string }>(`SELECT COUNT(*) as count FROM topology_nodes`);
+    const n = parseInt(nodeCount[0].count);
+    const x = 150 + (n % 4) * 220;
+    const y = 120 + Math.floor(n / 4) * 160;
+
+    await query(
+      `INSERT INTO topology_nodes (device_id, label, node_type, x, y, site_id)
+       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+      [deviceId, hostname, device_type || 'router', x, y, site_id || null]
+    );
+
+    res.status(201).json({ id: deviceId, message: 'Device added' });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
-// PUT /api/devices/:id - Update device
 router.put('/:id', async (req: Request, res: Response) => {
   const { hostname, ip_address, site_id, vendor, model, device_type, priority, community, snmp_enabled, icmp_enabled } = req.body;
   try {
@@ -83,13 +90,21 @@ router.put('/:id', async (req: Request, res: Response) => {
        WHERE id = $11`,
       [hostname, ip_address, site_id, vendor, model, device_type, priority, community, snmp_enabled, icmp_enabled, req.params.id]
     );
+    if (hostname || device_type) {
+      await query(
+        `UPDATE topology_nodes SET label = COALESCE($1, label), node_type = COALESCE($2, node_type) WHERE device_id = $3`,
+        [hostname, device_type, req.params.id]
+      );
+    }
+    if (ip_address) {
+      await query(`UPDATE icmp_targets SET ip_address = $1 WHERE device_id = $2`, [ip_address, req.params.id]);
+    }
     res.json({ message: 'Device updated' });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
-// DELETE /api/devices/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     await query(`DELETE FROM devices WHERE id = $1`, [req.params.id]);
