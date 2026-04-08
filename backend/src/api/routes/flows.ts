@@ -68,7 +68,8 @@ router.get('/timeline', async (req: Request, res: Response) => {
   try {
     const rows = await query(
       `SELECT
-         time_bucket('5 minutes', time_bucket) AS bucket,
+         date_trunc('minute', time_bucket) -
+           (EXTRACT(minute FROM time_bucket)::int % 5) * INTERVAL '1 minute' AS bucket,
          SUM(bytes)   AS total_bytes,
          SUM(packets) AS total_packets
        FROM flow_summary

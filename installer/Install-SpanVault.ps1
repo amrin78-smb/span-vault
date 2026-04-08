@@ -1,5 +1,4 @@
-# SpanVault - Windows Server Installer v3
-# Installs SpanVault WAN Monitoring System on Windows Server
+# SpanVault - Windows Server Installer v4
 # Run as Administrator
 
 param(
@@ -27,7 +26,7 @@ if (-not $current.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrato
 }
 
 Write-Host ""
-Write-Host "  SpanVault WAN Monitoring System - Installer v3" -ForegroundColor Blue
+Write-Host "  SpanVault WAN Monitoring System - Installer v4" -ForegroundColor Blue
 Write-Host "  ================================================" -ForegroundColor Blue
 Write-Host ""
 
@@ -37,68 +36,39 @@ if (-not $DbPassword) {
 
 # ─── Step 1: Check Node.js (must be v20) ─────────────────────────────────────
 Write-Step "Checking Node.js"
-$nodeOk = $false
 try {
   $nodeVersion = & node --version 2>&1
   $nodeMajor   = [int]($nodeVersion -replace "v(\d+)\..*", '$1')
   if ($nodeMajor -eq 20) {
     Write-OK "Node.js $nodeVersion (v20 - compatible)"
-    $nodeOk = $true
   } elseif ($nodeMajor -gt 20) {
-    Write-Warn "Node.js $nodeVersion detected (v$nodeMajor). Next.js 14 requires Node v20."
-    Write-Warn "Installing Node v20 via nvm-windows..."
+    Write-Warn "Node.js $nodeVersion detected. Next.js 14 requires Node v20. Switching..."
+    try { & nvm install 20 2>&1 | Out-Null; & nvm use 20 2>&1 | Out-Null; Write-OK "Switched to Node v20 via nvm" }
+    catch { Write-Warn "Could not switch via nvm. Build may hang. Install Node v20 manually if issues occur." }
   } else {
-    Write-Warn "Node.js $nodeVersion is too old. Installing v20..."
+    Write-Warn "Node.js $nodeVersion is too old. Please install v20 from nodejs.org"
   }
 } catch {
-  Write-Warn "Node.js not found. Installing v20..."
-}
-
-if (-not $nodeOk) {
-  # Try nvm first
-  try {
-    & nvm install 20 2>&1 | Out-Null
-    & nvm use 20    2>&1 | Out-Null
-    $nodeVersion = & node --version 2>&1
-    Write-OK "Node.js $nodeVersion installed via nvm"
-    $nodeOk = $true
-  } catch {
-    # Fall back to direct MSI install
-    Write-Warn "nvm not found. Downloading Node.js v20 MSI..."
-    $nodeInstaller = "$env:TEMP\node-v20-installer.msi"
-    Invoke-WebRequest "https://nodejs.org/dist/v20.15.0/node-v20.15.0-x64.msi" -OutFile $nodeInstaller
-    Start-Process msiexec -ArgumentList "/i `"$nodeInstaller`" /qn" -Wait
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + $env:PATH
-    $nodeVersion = & node --version 2>&1
-    Write-OK "Node.js $nodeVersion installed"
-  }
+  Write-Fail "Node.js not found. Install from https://nodejs.org/en/download (v20 LTS)"
 }
 
 # ─── Step 2: Check PostgreSQL ─────────────────────────────────────────────────
 Write-Step "Checking PostgreSQL"
 $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $pgService) { Write-Fail "PostgreSQL not found. Install from https://www.postgresql.org/download/windows/ then re-run." }
-Write-OK "PostgreSQL service found: $($pgService.Name)"
+if (-not $pgService) { Write-Fail "PostgreSQL not found. Install from https://www.postgresql.org/download/windows/" }
+Write-OK "PostgreSQL service: $($pgService.Name)"
 
 $psqlPath = Get-ChildItem "C:\Program Files\PostgreSQL" -Recurse -Filter "psql.exe" -ErrorAction SilentlyContinue |
   Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-if (-not $psqlPath) { Write-Fail "psql.exe not found." }
-Write-OK "psql found: $psqlPath"
+if (-not $psqlPath) { Write-Fail "psql.exe not found in PostgreSQL installation" }
+Write-OK "psql: $psqlPath"
 
 $pgBin = Split-Path $psqlPath
 $env:PATH = $env:PATH + ";$pgBin"
-
-# ─── Step 3: Check TimescaleDB ───────────────────────────────────────────────
-Write-Step "Checking TimescaleDB"
 $env:PGPASSWORD = $DbPassword
-$tsdbCheck = & $psqlPath -U $DbUser -d postgres -t -c "SELECT name FROM pg_available_extensions WHERE name='timescaledb'" 2>&1
-if ($tsdbCheck -notmatch "timescaledb") {
-  Write-Fail "TimescaleDB not found. Install from https://docs.timescale.com/self-hosted/latest/install/installation-windows/ then re-run."
-}
-Write-OK "TimescaleDB available"
 
-# ─── Step 4: Create Database ─────────────────────────────────────────────────
-Write-Step "Creating SpanVault database"
+# ─── Step 3: Create Database ─────────────────────────────────────────────────
+Write-Step "Creating database"
 $dbExists = & $psqlPath -U $DbUser -d postgres -t -c "SELECT 1 FROM pg_database WHERE datname='$DbName'" 2>&1
 if ($dbExists -match "1") {
   Write-OK "Database '$DbName' already exists"
@@ -107,33 +77,32 @@ if ($dbExists -match "1") {
   Write-OK "Database '$DbName' created"
 }
 
-# ─── Step 5: Run Schema ──────────────────────────────────────────────────────
+# ─── Step 4: Run Schema ──────────────────────────────────────────────────────
 Write-Step "Running database schema"
-$schemaPath = Join-Path (Split-Path $PSScriptRoot) "scripts\schema.sql"
-& $psqlPath -U $DbUser -d $DbName -f $schemaPath 2>&1 | Out-Null
+$sourceRoot = Split-Path $PSScriptRoot
+$schemaPath = Join-Path $sourceRoot "scripts\schema.sql"
+& $psqlPath -U $DbUser -d $DbName -v ON_ERROR_STOP=0 -f $schemaPath 2>&1 | Where-Object { $_ -match "ERROR" -and $_ -notmatch "already exists" } | ForEach-Object { Write-Warn $_ }
 Write-OK "Schema applied"
 
-# ─── Step 6: Seed Data ───────────────────────────────────────────────────────
+# ─── Step 5: Seed Data ───────────────────────────────────────────────────────
 if (-not $SkipSeed) {
-  Write-Step "Loading sample seed data"
-  $seedPath = Join-Path (Split-Path $PSScriptRoot) "scripts\seed.sql"
-  & $psqlPath -U $DbUser -d $DbName -f $seedPath 2>&1 | Out-Null
+  Write-Step "Loading seed data"
+  $seedPath = Join-Path $sourceRoot "scripts\seed.sql"
+  & $psqlPath -U $DbUser -d $DbName -v ON_ERROR_STOP=0 -f $seedPath 2>&1 | Out-Null
   Write-OK "Seed data loaded"
 }
 
-# ─── Step 7: Create Directories ──────────────────────────────────────────────
-Write-Step "Setting up directories"
+# ─── Step 6: Create Directories & Copy Files ─────────────────────────────────
+Write-Step "Setting up installation directory"
 @("$InstallDir", "$InstallDir\logs", "$InstallDir\scripts") | ForEach-Object {
-  if (-not (Test-Path $_)) { New-Item -ItemType Directory -Path $_ | Out-Null }
+  New-Item -ItemType Directory -Path $_ -Force | Out-Null
 }
-
-$sourceRoot = Split-Path $PSScriptRoot
 Copy-Item -Recurse -Force "$sourceRoot\backend\*"  "$InstallDir\backend\"
 Copy-Item -Recurse -Force "$sourceRoot\frontend\*" "$InstallDir\frontend\"
-Copy-Item -Force "$sourceRoot\scripts\*" "$InstallDir\scripts\"
+Copy-Item -Force "$sourceRoot\scripts\*"           "$InstallDir\scripts\"
 Write-OK "Files copied to $InstallDir"
 
-# ─── Step 8: Write config.json ───────────────────────────────────────────────
+# ─── Step 7: Write config.json ───────────────────────────────────────────────
 Write-Step "Writing config.json"
 $config = @{
   database   = @{ host="localhost"; port=5432; name=$DbName; user=$DbUser; password=$DbPassword }
@@ -147,53 +116,57 @@ $config = @{
 Set-Content -Path "$InstallDir\config.json" -Value $config
 Write-OK "config.json written"
 
-# ─── Step 9: Backend npm install + build ─────────────────────────────────────
+# ─── Step 8: Backend npm install + build ─────────────────────────────────────
 Write-Step "Installing backend packages"
 Set-Location "$InstallDir\backend"
 & npm install --omit=dev 2>&1 | Out-Null
+& npm install -D typescript 2>&1 | Out-Null
 Write-OK "Backend packages installed"
 
 Write-Step "Building backend"
 & npm run build 2>&1 | Out-Null
+if (-not (Test-Path "$InstallDir\backend\dist\index.js")) {
+  Write-Fail "Backend build failed - dist\index.js not found"
+}
 Write-OK "Backend built"
 
-# ─── Step 10: Frontend npm install + build ───────────────────────────────────
+# ─── Step 9: Frontend npm install + build ───────────────────────────────────
 Write-Step "Installing frontend packages"
 Set-Location "$InstallDir\frontend"
 & npm install 2>&1 | Out-Null
 & npm install -D tailwindcss@3 postcss autoprefixer 2>&1 | Out-Null
 Write-OK "Frontend packages installed"
 
-Write-Step "Building frontend (this takes 2-3 minutes)"
+# Fix tsconfig paths alias if needed
+$tsconfigPath = "$InstallDir\frontend\tsconfig.json"
+$tsconfig = Get-Content $tsconfigPath | ConvertFrom-Json
+if (-not $tsconfig.compilerOptions.paths) {
+  $tsconfig.compilerOptions | Add-Member -NotePropertyName "paths" -NotePropertyValue @{ "@/*" = @("./src/*") } -Force
+  $tsconfig | ConvertTo-Json -Depth 10 | Set-Content $tsconfigPath
+  Write-OK "Fixed tsconfig paths alias"
+}
+
+Write-Step "Building frontend (2-3 minutes)"
 $env:NEXT_PUBLIC_API_URL = "http://localhost:$ApiPort"
 & npm run build 2>&1 | Out-Null
 Write-OK "Frontend built"
 
-Write-Step "Copying frontend static files"
-$standalonePath = "$InstallDir\frontend\.next\standalone"
-if (Test-Path $standalonePath) {
-  Copy-Item -Recurse -Force "$InstallDir\frontend\.next\static"  "$standalonePath\.next\static"
-  Copy-Item -Recurse -Force "$InstallDir\frontend\public"        "$standalonePath\public" -ErrorAction SilentlyContinue
-  Write-OK "Static files copied"
-} else {
-  Write-Warn "Standalone folder not found - frontend will run via 'next start' instead"
-}
-
-# ─── Step 11: NSSM ───────────────────────────────────────────────────────────
+# ─── Step 10: NSSM Services ──────────────────────────────────────────────────
 Write-Step "Checking NSSM"
-$nssmCmd = Get-Command "nssm" -ErrorAction SilentlyContinue
-if (-not $nssmCmd) { Write-Fail "NSSM not found. Download nssm.exe from https://nssm.cc and place in C:\Windows\System32\ then re-run." }
+if (-not (Get-Command "nssm" -ErrorAction SilentlyContinue)) {
+  Write-Fail "NSSM not found. Download nssm.exe from https://nssm.cc and place in C:\Windows\System32\"
+}
 Write-OK "NSSM found"
 
 $nodePath = (Get-Command "node").Source
 $logDir   = "$InstallDir\logs"
 
 $services = @(
-  @{ Name="SpanVault-SNMP";       Script="dist/services/snmp/poller.js";       Env="SPANVAULT_SERVICE=snmp-poller;SPANVAULT_LOG_DIR=$logDir" },
-  @{ Name="SpanVault-ICMP";       Script="dist/services/icmp/monitor.js";      Env="SPANVAULT_SERVICE=icmp-monitor;SPANVAULT_LOG_DIR=$logDir" },
-  @{ Name="SpanVault-Flow";       Script="dist/services/flow/collector.js";    Env="SPANVAULT_SERVICE=flow-collector;SPANVAULT_LOG_DIR=$logDir" },
-  @{ Name="SpanVault-Aggregator"; Script="dist/services/aggregator/worker.js"; Env="SPANVAULT_SERVICE=aggregator;SPANVAULT_LOG_DIR=$logDir" },
-  @{ Name="SpanVault-API";        Script="dist/index.js";                      Env="SPANVAULT_SERVICE=api;SPANVAULT_LOG_DIR=$logDir" }
+  @{ Name="SpanVault-SNMP";       Script="dist/services/snmp/poller.js" },
+  @{ Name="SpanVault-ICMP";       Script="dist/services/icmp/monitor.js" },
+  @{ Name="SpanVault-Flow";       Script="dist/services/flow/collector.js" },
+  @{ Name="SpanVault-Aggregator"; Script="dist/services/aggregator/worker.js" },
+  @{ Name="SpanVault-API";        Script="dist/index.js" }
 )
 
 Write-Step "Registering backend services"
@@ -205,7 +178,7 @@ foreach ($svc in $services) {
   }
   & nssm install $svc.Name $nodePath "$InstallDir\backend\$($svc.Script)"
   & nssm set     $svc.Name AppDirectory        "$InstallDir\backend"
-  & nssm set     $svc.Name AppEnvironmentExtra $svc.Env
+  & nssm set     $svc.Name AppEnvironmentExtra "SPANVAULT_LOG_DIR=$logDir"
   & nssm set     $svc.Name AppStdout           "$logDir\$($svc.Name).log"
   & nssm set     $svc.Name AppStderr           "$logDir\$($svc.Name)-error.log"
   & nssm set     $svc.Name AppRotateFiles      1
@@ -214,55 +187,56 @@ foreach ($svc in $services) {
   Write-OK "Registered: $($svc.Name)"
 }
 
-# Frontend service — use standalone server.js if it exists, otherwise next start
 Write-Step "Registering frontend service"
 $existing = Get-Service -Name "SpanVault-Frontend" -ErrorAction SilentlyContinue
 if ($existing) {
   Stop-Service -Name "SpanVault-Frontend" -Force -ErrorAction SilentlyContinue
   & nssm remove "SpanVault-Frontend" confirm 2>&1 | Out-Null
 }
-
-$standalonServer = "$InstallDir\frontend\.next\standalone\server.js"
-if (Test-Path $standalonServer) {
-  & nssm install "SpanVault-Frontend" $nodePath $standalonServer
-  & nssm set     "SpanVault-Frontend" AppDirectory "$InstallDir\frontend\.next\standalone"
-} else {
-  # Fallback: run via next start
-  $nextBin = "$InstallDir\frontend\node_modules\.bin\next"
-  & nssm install "SpanVault-Frontend" $nodePath "$nextBin"
-  & nssm set     "SpanVault-Frontend" AppParameters "start -p $FrontendPort"
-  & nssm set     "SpanVault-Frontend" AppDirectory  "$InstallDir\frontend"
-}
-& nssm set "SpanVault-Frontend" AppEnvironmentExtra "PORT=$FrontendPort;NEXT_PUBLIC_API_URL=http://localhost:$ApiPort;SPANVAULT_LOG_DIR=$logDir"
-& nssm set "SpanVault-Frontend" AppStdout           "$logDir\SpanVault-Frontend.log"
-& nssm set "SpanVault-Frontend" AppStderr           "$logDir\SpanVault-Frontend-error.log"
-& nssm set "SpanVault-Frontend" Start               SERVICE_AUTO_START
+$nextBin = "$InstallDir\frontend\node_modules\next\dist\bin\next"
+& nssm install "SpanVault-Frontend" $nodePath $nextBin
+& nssm set     "SpanVault-Frontend" AppParameters          "start -p $FrontendPort"
+& nssm set     "SpanVault-Frontend" AppDirectory           "$InstallDir\frontend"
+& nssm set     "SpanVault-Frontend" AppEnvironmentExtra    "PORT=$FrontendPort;NEXT_PUBLIC_API_URL=http://localhost:$ApiPort"
+& nssm set     "SpanVault-Frontend" AppStdout              "$logDir\SpanVault-Frontend.log"
+& nssm set     "SpanVault-Frontend" AppStderr              "$logDir\SpanVault-Frontend-error.log"
+& nssm set     "SpanVault-Frontend" Start                  SERVICE_AUTO_START
 Write-OK "Registered: SpanVault-Frontend"
 
-# ─── Step 12: Start all services ─────────────────────────────────────────────
+# ─── Step 11: Firewall Rules ─────────────────────────────────────────────────
+Write-Step "Adding firewall rules"
+New-NetFirewallRule -DisplayName "SpanVault API"      -Direction Inbound -Protocol TCP -LocalPort $ApiPort      -Action Allow -ErrorAction SilentlyContinue | Out-Null
+New-NetFirewallRule -DisplayName "SpanVault Frontend" -Direction Inbound -Protocol TCP -LocalPort $FrontendPort -Action Allow -ErrorAction SilentlyContinue | Out-Null
+New-NetFirewallRule -DisplayName "SpanVault NetFlow"  -Direction Inbound -Protocol UDP -LocalPort $FlowPort     -Action Allow -ErrorAction SilentlyContinue | Out-Null
+Write-OK "Firewall rules added"
+
+# ─── Step 12: Start Services ─────────────────────────────────────────────────
 Write-Step "Starting all services"
 $allServices = @("SpanVault-SNMP","SpanVault-ICMP","SpanVault-Flow","SpanVault-Aggregator","SpanVault-API","SpanVault-Frontend")
 foreach ($svc in $allServices) {
   try {
-    & nssm start $svc 2>&1 | Out-Null
-    Start-Sleep -Milliseconds 500
+    Start-Service -Name $svc
+    Start-Sleep -Seconds 2
     $status = (Get-Service -Name $svc).Status
-    Write-OK "Started: $svc ($status)"
+    Write-OK "$svc - $status"
   } catch {
-    Write-Warn "Could not start $svc - check logs at $logDir"
+    Write-Warn "Could not start $svc - check $logDir\$svc-error.log"
   }
 }
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
+$serverIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" -and $_.IPAddress -notmatch "^169" } | Select-Object -First 1).IPAddress
+
 Write-Host ""
 Write-Host "  SpanVault installation complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Dashboard:   http://localhost:$FrontendPort" -ForegroundColor White
-Write-Host "  API:         http://localhost:$ApiPort"       -ForegroundColor White
-Write-Host "  NetFlow UDP: port $FlowPort"                  -ForegroundColor White
-Write-Host "  Logs:        $logDir"                         -ForegroundColor White
+Write-Host "  Local:   http://localhost:$FrontendPort" -ForegroundColor White
+Write-Host "  Network: http://$serverIP`:$FrontendPort" -ForegroundColor White
+Write-Host "  API:     http://localhost:$ApiPort" -ForegroundColor White
+Write-Host "  Logs:    $logDir" -ForegroundColor White
 Write-Host ""
-Write-Host "  Manage services:" -ForegroundColor Gray
-Write-Host "    nssm status SpanVault-API" -ForegroundColor Gray
-Write-Host "    nssm restart SpanVault-Frontend" -ForegroundColor Gray
+Write-Host "  Next steps:" -ForegroundColor Gray
+Write-Host "  1. Delete seed devices and add your real network devices" -ForegroundColor Gray
+Write-Host "  2. Configure routers to export NetFlow to UDP $FlowPort" -ForegroundColor Gray
+Write-Host "  3. Set correct SNMP community strings per device" -ForegroundColor Gray
 Write-Host ""
