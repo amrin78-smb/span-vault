@@ -81,7 +81,8 @@ if ($dbExists -match "1") {
 Write-Step "Running database schema"
 $sourceRoot = Split-Path $PSScriptRoot
 $schemaPath = Join-Path $sourceRoot "scripts\schema.sql"
-& $psqlPath -U $DbUser -d $DbName -v ON_ERROR_STOP=0 -f $schemaPath 2>&1 | Where-Object { $_ -match "ERROR" -and $_ -notmatch "already exists" } | ForEach-Object { Write-Warn $_ }
+$env:PGOPTIONS = "--client-min-messages=warning"
+$schemaOut = & cmd /c "`"$psqlPath`" -U $DbUser -d $DbName -v ON_ERROR_STOP=0 -f `"$schemaPath`" 2>&1"
 Write-OK "Schema applied"
 
 # ─── Step 5: Seed Data ───────────────────────────────────────────────────────
@@ -137,14 +138,12 @@ Set-Location "$InstallDir\frontend"
 & npm install -D tailwindcss@3 postcss autoprefixer 2>&1 | Out-Null
 Write-OK "Frontend packages installed"
 
-# Fix tsconfig paths alias if needed
+# Fix tsconfig paths alias (files copied flat, not in src/)
 $tsconfigPath = "$InstallDir\frontend\tsconfig.json"
-$tsconfig = Get-Content $tsconfigPath | ConvertFrom-Json
-if (-not $tsconfig.compilerOptions.paths) {
-  $tsconfig.compilerOptions | Add-Member -NotePropertyName "paths" -NotePropertyValue @{ "@/*" = @("./src/*") } -Force
-  $tsconfig | ConvertTo-Json -Depth 10 | Set-Content $tsconfigPath
-  Write-OK "Fixed tsconfig paths alias"
-}
+$tsconfigRaw = Get-Content $tsconfigPath -Raw
+$tsconfigRaw = $tsconfigRaw -replace '"@/\*":\s*\["./src/\*"\]', '"@/*": ["./*"]'
+Set-Content $tsconfigPath $tsconfigRaw
+Write-OK "Fixed tsconfig paths alias"
 
 Write-Step "Building frontend (2-3 minutes)"
 $env:NEXT_PUBLIC_API_URL = "http://localhost:$ApiPort"
@@ -193,9 +192,9 @@ if ($existing) {
   Stop-Service -Name "SpanVault-Frontend" -Force -ErrorAction SilentlyContinue
   & nssm remove "SpanVault-Frontend" confirm 2>&1 | Out-Null
 }
-$nextBin = "$InstallDir\frontend\node_modules\next\dist\bin\next"
-& nssm install "SpanVault-Frontend" $nodePath $nextBin
-& nssm set     "SpanVault-Frontend" AppParameters          "start -p $FrontendPort"
+# Use full node.exe path with next binary as argument - avoids NSSM module resolution issues
+$nodeExe = (Get-Command "node").Source
+& nssm install "SpanVault-Frontend" $nodeExe "$InstallDir\frontend\node_modules\next\dist\bin\next start -p $FrontendPort"
 & nssm set     "SpanVault-Frontend" AppDirectory           "$InstallDir\frontend"
 & nssm set     "SpanVault-Frontend" AppEnvironmentExtra    "PORT=$FrontendPort;NEXT_PUBLIC_API_URL=http://localhost:$ApiPort"
 & nssm set     "SpanVault-Frontend" AppStdout              "$logDir\SpanVault-Frontend.log"
