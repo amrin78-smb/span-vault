@@ -47,6 +47,16 @@ const counterCache = new Map<number, CounterCache>();
 const MAX_32BIT = BigInt(4294967295);
 const MAX_64BIT = BigInt('18446744073709551615');
 
+// Safe BigInt conversion - handles null bytes and invalid values from some devices
+function safeBigInt(val: unknown): bigint {
+  try {
+    const s = String(val ?? 0).replace(/\x00/g, '').replace(/[^0-9]/g, '') || '0';
+    return BigInt(s);
+  } catch {
+    return BigInt(0);
+  }
+}
+
 // Calculate delta handling counter rollover
 function calcDelta(current: bigint, previous: bigint, is64bit: boolean): bigint {
   const maxVal = is64bit ? MAX_64BIT : MAX_32BIT;
@@ -151,12 +161,12 @@ async function pollDevice(device: {
 
       // Prefer 64-bit counters if available
       const has64bit  = hcInMap.has(ifIndex) && hcOutMap.has(ifIndex);
-      const inOctets  = BigInt(String(has64bit ? hcInMap.get(ifIndex) : inOctetsMap.get(ifIndex) ?? 0));
-      const outOctets = BigInt(String(has64bit ? hcOutMap.get(ifIndex) : outOctetsMap.get(ifIndex) ?? 0));
-      const inErrors  = BigInt(String(inErrMap.get(ifIndex) ?? 0));
-      const outErrors = BigInt(String(outErrMap.get(ifIndex) ?? 0));
-      const inDisc    = BigInt(String(inDiscMap.get(ifIndex) ?? 0));
-      const outDisc   = BigInt(String(outDiscMap.get(ifIndex) ?? 0));
+      const inOctets  = safeBigInt(has64bit ? hcInMap.get(ifIndex) : inOctetsMap.get(ifIndex) ?? 0);
+      const outOctets = safeBigInt(has64bit ? hcOutMap.get(ifIndex) : outOctetsMap.get(ifIndex) ?? 0);
+      const inErrors  = safeBigInt(inErrMap.get(ifIndex) ?? 0);
+      const outErrors = safeBigInt(outErrMap.get(ifIndex) ?? 0);
+      const inDisc    = safeBigInt(inDiscMap.get(ifIndex) ?? 0);
+      const outDisc   = safeBigInt(outDiscMap.get(ifIndex) ?? 0);
 
       // Upsert interface record
       const ifRows = await query<{ id: number }>(
