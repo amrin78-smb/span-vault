@@ -29,6 +29,7 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   const [err, setErr] = useState('');
   const [done, setDone] = useState(0);
   const [search, setSearch] = useState('');
+  const [siteFilter, setSiteFilter] = useState('');
 
   useEffect(() => {
     fetch(`${API}/api/devices/netvault-import`)
@@ -46,9 +47,13 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   }
 
   function toggleAll() {
+    const filteredIPs = filtered.map(d => d.ip_address);
+    const allSelected = filteredIPs.every(ip => selected.has(ip));
     setSelected(prev => {
-      const allSelected = prev.size === devices.length;
-      return allSelected ? new Set() : new Set(devices.map(d => d.ip_address));
+      const next = new Set(prev);
+      if (allSelected) { filteredIPs.forEach(ip => next.delete(ip)); }
+      else { filteredIPs.forEach(ip => next.add(ip)); }
+      return next;
     });
   }
 
@@ -89,15 +94,18 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
     onClose();
   }
 
-  const filtered = search
-    ? devices.filter(d => {
-        const q = search.toLowerCase();
-        return (d.hostname||'').toLowerCase().includes(q) ||
-               (d.ip_address||'').includes(q) ||
-               (d.site_name||'').toLowerCase().includes(q) ||
-               (d.vendor||'').toLowerCase().includes(q);
-      })
-    : devices;
+  const filtered = devices.filter(d => {
+    const q = search.toLowerCase();
+    const matchSearch = !q ||
+      (d.hostname||'').toLowerCase().includes(q) ||
+      (d.ip_address||'').includes(q) ||
+      (d.site_name||'').toLowerCase().includes(q) ||
+      (d.vendor||'').toLowerCase().includes(q);
+    const matchSite = !siteFilter || d.site_name === siteFilter;
+    return matchSearch && matchSite;
+  });
+
+  const sites = Array.from(new Set(devices.map(d => d.site_name).filter(Boolean))).sort();
 
   const bysite = filtered.reduce((acc, d) => {
     const k = d.site_name || 'No Site';
@@ -118,13 +126,21 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: 12 }}>
+          <div style={{ display:'flex', gap:8, marginBottom:12 }}>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search hostname, IP, site, vendor…"
-              style={{ width: '100%', padding: '9px 14px', border: `1px solid ${C.border}`, fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }}
+              placeholder="Search hostname, IP, vendor…"
+              style={{ flex:1, padding:'9px 14px', border:`1px solid ${C.border}`, fontSize:13, outline:'none' }}
             />
+            <select
+              value={siteFilter}
+              onChange={e => setSiteFilter(e.target.value)}
+              style={{ padding:'9px 14px', border:`1px solid ${C.border}`, fontSize:13, outline:'none', background:'#fff', minWidth:160 }}
+            >
+              <option value="">All Sites</option>
+              {sites.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: C.muted }}>
