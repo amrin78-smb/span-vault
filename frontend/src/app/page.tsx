@@ -13,6 +13,7 @@ const h3  = () => subHours(new Date(), 3).toISOString();
 
 interface IcmpMetric { time: string; latency_ms: number; packet_loss: number; status: string; }
 interface IcmpTarget { id: number; device_id: number; label: string; ip_address: string; }
+interface Device { id: number; hostname: string; status: string; }
 interface DeviceIcmp { device_id: number; avg_latency_ms: number|null; avg_packet_loss: number|null; }
 
 export default function DashboardPage() {
