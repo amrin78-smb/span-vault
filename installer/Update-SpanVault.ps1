@@ -67,23 +67,43 @@ Write-OK "Scripts updated"
 Write-Step "Updating frontend files"
 $frontendSrc = "$tempDir\frontend"
 
-# Copy frontend source files - handles both src/ structure (GitHub) and flat structure (server)
+# Copy frontend files - GitHub has src/ structure, server has flat structure
+# We copy from src/ into the flat app/components/lib folders on the server
 $srcDir = "$frontendSrc\src"
-if (-not (Test-Path $srcDir)) { $srcDir = $frontendSrc }
 
-Get-ChildItem "$srcDir" -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
-  $relative = $_.FullName.Substring($srcDir.Length + 1)
-  if ($relative -notmatch "^node_modules" -and $relative -notmatch "^\.next") {
-    # Copy to both flat location and src/ location
-    $dest = Join-Path "$InstallDir\frontend" $relative
+# Copy app pages
+Get-ChildItem "$srcDir\app" -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+  $relative = $_.FullName.Substring("$srcDir\app".Length + 1)
+  $dest = Join-Path "$InstallDir\frontend\app" $relative
+  $destDir = Split-Path $dest
+  if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+  Copy-Item -Force $_.FullName $dest
+}
+
+# Copy components
+if (Test-Path "$srcDir\components") {
+  Get-ChildItem "$srcDir\components" -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+    $relative = $_.FullName.Substring("$srcDir\components".Length + 1)
+    $dest = Join-Path "$InstallDir\frontend\components" $relative
     $destDir = Split-Path $dest
     if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
     Copy-Item -Force $_.FullName $dest
   }
 }
 
-# Also copy other frontend config files
-@("next.config.js","tailwind.config.js","postcss.config.js","package.json","tsconfig.json") | ForEach-Object {
+# Copy lib
+if (Test-Path "$srcDir\lib") {
+  Get-ChildItem "$srcDir\lib" -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+    $relative = $_.FullName.Substring("$srcDir\lib".Length + 1)
+    $dest = Join-Path "$InstallDir\frontend\lib" $relative
+    $destDir = Split-Path $dest
+    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+    Copy-Item -Force $_.FullName $dest
+  }
+}
+
+# Copy config files
+@("next.config.js","tailwind.config.js","postcss.config.js","tsconfig.json") | ForEach-Object {
   $src = Join-Path $frontendSrc $_
   if (Test-Path $src) { Copy-Item -Force $src "$InstallDir\frontend\$_" }
 }
