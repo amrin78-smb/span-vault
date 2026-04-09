@@ -48,7 +48,7 @@ async function checkTarget(target: IcmpTarget): Promise<void> {
       [target.id, avgLatency, packetLoss.toFixed(2), status]
     );
 
-    if (target.device_id) {
+    if (target.device_id != null) {
       await query(
         `UPDATE devices SET status = $1, last_seen = CASE WHEN $1 = 'up' THEN NOW() ELSE last_seen END WHERE id = $2`,
         [status, target.device_id]
@@ -69,7 +69,7 @@ async function raiseAlert(target: IcmpTarget, alertType: string, severity: strin
   try {
     await query(
       `INSERT INTO alerts (device_id, target_id, alert_type, severity, message) SELECT $1, $2, $3, $4, $5 WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE target_id = $2 AND alert_type = $3 AND resolved = FALSE)`,
-      [target.device_id, target.id, alertType, severity, message]
+      [target.device_id ?? null, target.id, alertType, severity, message]
     );
   } catch {}
 }

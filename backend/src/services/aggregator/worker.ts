@@ -152,8 +152,8 @@ async function scoreSiteHealth(): Promise<void> {
         [site.id]
       );
 
-      const icmpScore = icmpData[0]?.up_pct   ?? 100;
-      const utilScore = 100 - Math.min(utilData[0]?.avg_util ?? 0, 100);
+      const icmpScore = Number(icmpData[0]?.up_pct ?? 100);
+      const utilScore = Number(100 - Math.min(Number(utilData[0]?.avg_util ?? 0), 100));
       const health    = Math.round((icmpScore * 0.6) + (utilScore * 0.4));
 
       logger.debug('Site health score', {
