@@ -133,7 +133,7 @@ export default function DashboardPage() {
               const lat  = d.avg_latency_ms != null ? Number(d.avg_latency_ms) : null;
               const loss = Number(d.avg_packet_loss ?? 0);
               const color = lat == null ? C.muted : loss >= 100 ? C.crit : loss > 5 ? C.warn : C.up;
-              const device = (alerts||[]).find(a => a.device_id === d.device_id);
+              const device = (devices||[]).find((dev:any) => dev.id === d.device_id);
               return (
                 <div key={d.device_id} style={{ padding:'16px 20px', background: lat==null?'#fafbfc':loss>=100?C.critBg:C.upBg, borderLeft:`3px solid ${color}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:6 }}>{device?.hostname || `Device ${d.device_id}`}</div>
