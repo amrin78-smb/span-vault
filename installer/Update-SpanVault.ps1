@@ -67,16 +67,25 @@ Write-OK "Scripts updated"
 Write-Step "Updating frontend files"
 $frontendSrc = "$tempDir\frontend"
 
-# Copy all frontend source files
-Get-ChildItem "$frontendSrc" -Recurse -Exclude "node_modules",".next" | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
-  $relative = $_.FullName.Substring($frontendSrc.Length + 1)
-  # Skip node_modules and .next
+# Copy frontend source files - handles both src/ structure (GitHub) and flat structure (server)
+$srcDir = "$frontendSrc\src"
+if (-not (Test-Path $srcDir)) { $srcDir = $frontendSrc }
+
+Get-ChildItem "$srcDir" -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+  $relative = $_.FullName.Substring($srcDir.Length + 1)
   if ($relative -notmatch "^node_modules" -and $relative -notmatch "^\.next") {
+    # Copy to both flat location and src/ location
     $dest = Join-Path "$InstallDir\frontend" $relative
     $destDir = Split-Path $dest
     if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
     Copy-Item -Force $_.FullName $dest
   }
+}
+
+# Also copy other frontend config files
+@("next.config.js","tailwind.config.js","postcss.config.js","package.json","tsconfig.json") | ForEach-Object {
+  $src = Join-Path $frontendSrc $_
+  if (Test-Path $src) { Copy-Item -Force $src "$InstallDir\frontend\$_" }
 }
 
 # Fix tsconfig paths alias
