@@ -30,7 +30,7 @@ if (-not $ServerIP) {
 Write-Step "Pulling latest from GitHub"
 $tempDir = "$env:TEMP\spanvault-update"
 if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir }
-git clone $RepoUrl $tempDir 2>&1 | Out-Null
+git clone $RepoUrl $tempDir 2>$null
 Write-OK "Downloaded latest code"
 
 # ─── Step 2: Stop services ───────────────────────────────────────────────────
