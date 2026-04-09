@@ -3,12 +3,15 @@ import { useState } from 'react';
 import useSWR from 'swr';
 import { api, Device, Site } from '@/lib/api';
 import { format } from 'date-fns';
-import { C, KpiTile, Card, PageHeader, StatusBadge, UtilBar, Input, Select, Field, Btn, Modal } from '@/components/shared/ui';
+import { C, KpiTile, Card, PageHeader, StatusBadge, Btn, Modal, Field, Input, Select } from '@/components/shared/ui';
 
 const TYPES=['router','switch','firewall','server','ap','cloud'];
 const PRIS=['critical','high','normal','low'];
+
 interface F { hostname:string;ip_address:string;site_id:string;vendor:string;model:string;device_type:string;priority:string;community:string; }
 const BLANK:F={hostname:'',ip_address:'',site_id:'',vendor:'',model:'',device_type:'router',priority:'normal',community:'public'};
+
+interface DeviceIcmp { device_id:number; avg_latency_ms:number|null; avg_packet_loss:number|null; last_status:string|null; }
 
 function DevModal({device,sites,onClose,onSaved}:{device:Device|null;sites:Site[];onClose:()=>void;onSaved:()=>void}) {
   const [f,setF]=useState<F>(device?{hostname:device.hostname,ip_address:device.ip_address,site_id:String(device.site_id??''),vendor:device.vendor??'',model:device.model??'',device_type:device.device_type??'router',priority:device.priority??'normal',community:'public'}:{...BLANK});
@@ -47,22 +50,48 @@ function ConfDel({hostname,onConfirm,onCancel}:{hostname:string;onConfirm:()=>vo
     <Modal title="Delete Device" onClose={onCancel} width={380}>
       <p style={{fontSize:15,color:C.sub,marginBottom:8}}>Remove <strong style={{color:C.text,fontFamily:C.mono}}>{hostname}</strong>?</p>
       <p style={{fontSize:13,color:C.crit,fontWeight:600,marginBottom:24}}>This cannot be undone.</p>
-      <div style={{display:'flex',justifyContent:'flex-end',gap:10}}><Btn onClick={onCancel}>Cancel</Btn><Btn variant="danger" onClick={onConfirm}>Delete Device</Btn></div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10}}><Btn onClick={onCancel}>Cancel</Btn><Btn variant="danger" onClick={()=>onConfirm()}>Delete Device</Btn></div>
     </Modal>
   );
 }
 
+function IcmpCell({icmp}:{icmp:DeviceIcmp|undefined}) {
+  if (!icmp || icmp.avg_latency_ms == null) {
+    return <span style={{fontSize:12,color:C.muted}}>No data</span>;
+  }
+  const loss = Number(icmp.avg_packet_loss ?? 0);
+  const lat  = Number(icmp.avg_latency_ms);
+  const color = loss > 10 ? C.crit : loss > 0 ? C.warn : C.up;
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:3}}>
+      <div style={{fontSize:12,fontWeight:600,color}}>
+        {lat.toFixed(1)} ms
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <div style={{width:70,height:3,background:C.border,overflow:'hidden'}}>
+          <div style={{width:`${Math.min(loss,100)}%`,height:'100%',background:color}}/>
+        </div>
+        <span style={{fontSize:10,color:C.muted}}>{loss.toFixed(0)}% loss</span>
+      </div>
+    </div>
+  );
+}
+
 const TH=({c,right}:{c:string;right?:boolean})=>(
-  <th style={{padding:'12px 20px',textAlign:right?'right':'left',fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:'1px',borderBottom:`2px solid ${C.border}`}}>{c}</th>
+  <th style={{padding:'10px 16px',textAlign:right?'right':'left',fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:'1px',borderBottom:`2px solid ${C.border}`}}>{c}</th>
 );
 
 export default function DevicesPage() {
   const {data:devices,isLoading,mutate}=useSWR<Device[]>('devices',api.getDevices,{refreshInterval:30000});
   const {data:sites}=useSWR<Site[]>('sites',api.getSites);
+  const {data:icmpData}=useSWR<DeviceIcmp[]>('devices-icmp',()=>fetch(`${process.env.NEXT_PUBLIC_API_URL||'http://localhost:3001'}/api/metrics/devices-icmp`).then(r=>r.json()),{refreshInterval:30000});
+
   const [modal,setModal]=useState<'add'|Device|null>(null);
   const [confirm,setConfirm]=useState<Device|null>(null);
   const [search,setSearch]=useState('');
   const [typeF,setTypeF]=useState('all');
+
+  const icmpMap = new Map<number,DeviceIcmp>((icmpData||[]).map(i=>[i.device_id,i]));
 
   const filtered=(devices||[]).filter(d=>{
     const q=search.toLowerCase();
@@ -79,10 +108,10 @@ export default function DevicesPage() {
         right={<Btn variant="primary" onClick={()=>setModal('add')}>+ Add Device</Btn>} />
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:2}}>
-        <KpiTile label="Total"   value={devices?.length??'—'} color={C.info} />
-        <KpiTile label="Online"  value={up}   color={C.up}   bg={C.upBg} />
-        <KpiTile label="Down"    value={down} color={down>0?C.crit:C.muted} bg={down>0?C.critBg:C.surface} />
-        <KpiTile label="Warning" value={(devices||[]).filter(d=>d.status==='warning').length} color={C.warn} bg={C.warnBg} />
+        <KpiTile label="Total"   value={devices?.length??'—'} color={C.info}/>
+        <KpiTile label="Online"  value={up}   color={C.up}   bg={C.upBg}/>
+        <KpiTile label="Down"    value={down} color={down>0?C.crit:C.muted} bg={down>0?C.critBg:C.surface}/>
+        <KpiTile label="Warning" value={(devices||[]).filter(d=>d.status==='warning').length} color={C.warn} bg={C.warnBg}/>
       </div>
 
       <div style={{display:'flex',gap:10}}>
@@ -96,30 +125,30 @@ export default function DevicesPage() {
         ):(
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse'}}>
-              <thead><tr><TH c="Hostname"/><TH c="IP Address"/><TH c="Site"/><TH c="Vendor / Model"/><TH c="Type"/><TH c="Status"/><TH c="Utilization"/><TH c="Last Seen"/><TH c=""/></tr></thead>
+              <thead><tr>
+                <TH c="Hostname"/><TH c="IP Address"/><TH c="Site"/>
+                <TH c="Vendor / Model"/><TH c="Type"/><TH c="Status"/>
+                <TH c="ICMP (5 min avg)"/><TH c="Last Seen"/><TH c=""/>
+              </tr></thead>
               <tbody>
-                {filtered.map((d,i)=>{
-                  const util=d.status==='up'?Math.floor(Math.random()*60+20):0;
-                  const rowBg=i%2===0?'#fff':'#fafbfc';
-                  return (
-                    <tr key={d.id} style={{background:rowBg}}>
-                      <td style={{padding:'14px 20px',fontSize:14,fontWeight:700,color:C.text,borderTop:`1px solid ${C.border}`}}>{d.hostname}</td>
-                      <td style={{padding:'14px 20px',fontFamily:C.mono,fontSize:13,color:C.sub,borderTop:`1px solid ${C.border}`}}>{d.ip_address}</td>
-                      <td style={{padding:'14px 20px',fontSize:13,color:C.muted,borderTop:`1px solid ${C.border}`}}>{d.site_name||'—'}</td>
-                      <td style={{padding:'14px 20px',fontSize:13,color:C.sub,borderTop:`1px solid ${C.border}`}}>{[d.vendor,d.model].filter(Boolean).join(' ')||'—'}</td>
-                      <td style={{padding:'14px 20px',fontSize:13,color:C.sub,textTransform:'capitalize',borderTop:`1px solid ${C.border}`}}>{d.device_type||'—'}</td>
-                      <td style={{padding:'14px 20px',borderTop:`1px solid ${C.border}`}}><StatusBadge status={d.status||'unknown'}/></td>
-                      <td style={{padding:'14px 20px',borderTop:`1px solid ${C.border}`}}>{d.status==='up'?<UtilBar pct={util}/>:<span style={{color:C.muted}}>—</span>}</td>
-                      <td style={{padding:'14px 20px',fontSize:13,color:C.muted,borderTop:`1px solid ${C.border}`}}>{d.last_seen?format(new Date(d.last_seen),'dd MMM HH:mm'):'Never'}</td>
-                      <td style={{padding:'14px 20px',borderTop:`1px solid ${C.border}`}}>
-                        <div style={{display:'flex',gap:8}}>
-                          <Btn onClick={()=>setModal(d)}>Edit</Btn>
-                          <Btn variant="danger" onClick={()=>setConfirm(d)}>Delete</Btn>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {filtered.map((d,i)=>(
+                  <tr key={d.id} style={{background:i%2===0?'#fff':'#fafbfc'}}>
+                    <td style={{padding:'12px 16px',fontSize:14,fontWeight:700,color:C.text,borderTop:`1px solid ${C.border}`}}>{d.hostname}</td>
+                    <td style={{padding:'12px 16px',fontFamily:C.mono,fontSize:13,color:C.sub,borderTop:`1px solid ${C.border}`}}>{d.ip_address}</td>
+                    <td style={{padding:'12px 16px',fontSize:13,color:C.muted,borderTop:`1px solid ${C.border}`}}>{d.site_name||'—'}</td>
+                    <td style={{padding:'12px 16px',fontSize:13,color:C.sub,borderTop:`1px solid ${C.border}`}}>{[d.vendor,d.model].filter(Boolean).join(' ')||'—'}</td>
+                    <td style={{padding:'12px 16px',fontSize:13,color:C.sub,textTransform:'capitalize',borderTop:`1px solid ${C.border}`}}>{d.device_type||'—'}</td>
+                    <td style={{padding:'12px 16px',borderTop:`1px solid ${C.border}`}}><StatusBadge status={d.status||'unknown'}/></td>
+                    <td style={{padding:'12px 16px',borderTop:`1px solid ${C.border}`}}><IcmpCell icmp={icmpMap.get(d.id)}/></td>
+                    <td style={{padding:'12px 16px',fontSize:13,color:C.muted,borderTop:`1px solid ${C.border}`}}>{d.last_seen?format(new Date(d.last_seen),'dd MMM HH:mm'):'Never'}</td>
+                    <td style={{padding:'12px 16px',borderTop:`1px solid ${C.border}`}}>
+                      <div style={{display:'flex',gap:8}}>
+                        <Btn onClick={()=>setModal(d)}>Edit</Btn>
+                        <Btn variant="danger" onClick={()=>setConfirm(d)}>Delete</Btn>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
                 {!filtered.length&&<tr><td colSpan={9} style={{padding:'60px',textAlign:'center',color:C.muted,fontSize:14}}>{search||typeF!=='all'?'No devices match your filter.':'No devices found.'}</td></tr>}
               </tbody>
             </table>

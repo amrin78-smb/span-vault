@@ -102,3 +102,24 @@ router.get('/summary', async (_req: Request, res: Response) => {
 });
 
 export default router;
+
+// GET /api/metrics/devices-icmp - Latest ICMP stats for all devices
+router.get('/devices-icmp', async (_req: Request, res: Response) => {
+  try {
+    const rows = await query(
+      `SELECT
+         d.id AS device_id,
+         ROUND(AVG(im.latency_ms)::numeric, 1)   AS avg_latency_ms,
+         ROUND(AVG(im.packet_loss)::numeric, 1)   AS avg_packet_loss,
+         MAX(im.status)                            AS last_status
+       FROM devices d
+       LEFT JOIN icmp_targets t ON t.device_id = d.id
+       LEFT JOIN icmp_metrics im ON im.target_id = t.id
+         AND im.time > NOW() - INTERVAL '5 minutes'
+       GROUP BY d.id`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
