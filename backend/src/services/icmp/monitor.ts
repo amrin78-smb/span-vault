@@ -50,7 +50,7 @@ async function checkTarget(target: IcmpTarget): Promise<void> {
 
     if (target.device_id != null) {
       await query(
-        `UPDATE devices SET status = $1, last_seen = CASE WHEN $1 = 'up' THEN NOW() ELSE last_seen END WHERE id = $2`,
+        `UPDATE devices SET status = $1::text, last_seen = CASE WHEN $1::text = 'up' THEN NOW() ELSE last_seen END WHERE id = $2`,
         [status, target.device_id]
       );
     }
