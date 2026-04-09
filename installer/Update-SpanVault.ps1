@@ -71,12 +71,12 @@ Write-OK "Backend source updated"
 Write-Step "Updating frontend files"
 $frontendSrc = "$tempDir\frontend\src"
 
-# app pages
+# app pages - use -LiteralPath to handle folder names with brackets like [id]
 Get-ChildItem "$frontendSrc\app" -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
   $relative = $_.FullName.Substring("$frontendSrc\app".Length + 1)
   $dest = Join-Path "$InstallDir\frontend\app" $relative
-  New-Item -ItemType Directory -Path (Split-Path $dest) -Force | Out-Null
-  Copy-Item -Force $_.FullName $dest
+  New-Item -ItemType Directory -LiteralPath (Split-Path $dest) -Force | Out-Null
+  Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
 }
 
 # components
