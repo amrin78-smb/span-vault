@@ -56,16 +56,15 @@ function ConfDel({hostname,onConfirm,onCancel}:{hostname:string;onConfirm:()=>vo
 }
 
 function IcmpCell({icmp}:{icmp:DeviceIcmp|undefined}) {
-  if (!icmp || icmp.avg_latency_ms == null) {
-    return <span style={{fontSize:12,color:C.muted}}>No data</span>;
-  }
+  if (!icmp) return <span style={{fontSize:12,color:C.muted}}>—</span>;
   const loss = Number(icmp.avg_packet_loss ?? 0);
-  const lat  = Number(icmp.avg_latency_ms);
-  const color = loss > 10 ? C.crit : loss > 0 ? C.warn : C.up;
+  const lat  = icmp.avg_latency_ms != null ? Number(icmp.avg_latency_ms) : null;
+  const color = loss >= 100 ? C.crit : loss > 10 ? C.warn : loss > 0 ? C.warn : C.up;
+  if (lat == null && loss === 0) return <span style={{fontSize:12,color:C.muted}}>No data</span>;
   return (
     <div style={{display:'flex',flexDirection:'column',gap:3}}>
       <div style={{fontSize:12,fontWeight:600,color}}>
-        {lat.toFixed(1)} ms
+        {lat != null ? `${lat.toFixed(1)} ms` : '—'}
       </div>
       <div style={{display:'flex',alignItems:'center',gap:6}}>
         <div style={{width:70,height:3,background:C.border,overflow:'hidden'}}>
