@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const { data: alerts }  = useSWR<Alert[]>('alerts-d', () => api.getAlerts(false), { refreshInterval: 20000 });
   const { data: targets } = useSWR<IcmpTarget[]>('icmp-targets', () => fetch(`${API}/api/sites`).then(r=>r.json()).catch(()=>[]), { refreshInterval: 60000 });
   const { data: devicesIcmp } = useSWR<DeviceIcmp[]>('devices-icmp-dash', () => fetch(`${API}/api/metrics/devices-icmp`).then(r=>r.json()), { refreshInterval: 30000 });
+  const { data: devices } = useSWR<Device[]>('devices-dash', api.getDevices, { refreshInterval: 60000 });
 
   // Fetch ICMP trend for all targets combined
   const { data: icmpTrend } = useSWR<IcmpMetric[]>('icmp-trend', () =>
