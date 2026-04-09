@@ -115,3 +115,44 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 export default router;
+
+// GET /api/devices/lookup/:ip - Look up device details from NetVault by IP
+router.get('/lookup/:ip', async (req: Request, res: Response) => {
+  try {
+    const { nvQuery } = await import('../../db/netvault');
+    const rows = await nvQuery(
+      `SELECT
+         d.name,
+         d.model,
+         d.ip_address,
+         d.site_id,
+         d.device_status,
+         d.mgmt_protocol,
+         b.name  AS vendor,
+         dt.name AS device_type,
+         s.name  AS site_name
+       FROM devices d
+       LEFT JOIN brands       b  ON b.id  = d.brand_id
+       LEFT JOIN device_types dt ON dt.id = d.device_type_id
+       LEFT JOIN sites        s  ON s.id  = d.site_id
+       WHERE d.ip_address = $1
+         AND d.device_status = 'Active'
+       LIMIT 1`,
+      [req.params.ip]
+    );
+    if (!rows.length) return res.json({ found: false });
+    const d = rows[0];
+    res.json({
+      found:       true,
+      hostname:    d.name,
+      model:       d.model,
+      vendor:      d.vendor,
+      device_type: d.device_type,
+      site_id:     d.site_id,
+      site_name:   d.site_name,
+    });
+  } catch (err) {
+    // NetVault not available - return not found gracefully
+    res.json({ found: false });
+  }
+});
