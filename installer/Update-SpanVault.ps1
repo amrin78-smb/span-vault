@@ -1,75 +1,137 @@
 # SpanVault - Update Script
-# Run as Administrator to update SpanVault to a newer version
-# Stops services, pulls latest code, rebuilds, restarts
+# Pulls latest from GitHub and rebuilds backend + frontend
+# Run as Administrator from any directory
 
 param(
-  [string]$InstallDir = "C:\SpanVault",
-  [string]$SourceDir  = ""   # Path to new SpanVault source. Defaults to current script directory.
+  [string]$InstallDir  = "C:\SpanVault",
+  [string]$RepoUrl     = "https://github.com/amrin78-smb/span-vault.git",
+  [string]$ServerIP    = "",
+  [int]   $ApiPort     = 3001,
+  [int]   $FrontendPort = 3002
 )
 
 $ErrorActionPreference = "Stop"
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK([string]$msg)   { Write-Host "    [OK] $msg" -ForegroundColor Green }
-function Write-Warn([string]$msg) { Write-Host "    [!!] $msg" -ForegroundColor Yellow }
+function Write-Fail([string]$msg) { Write-Host "    [XX] $msg" -ForegroundColor Red; exit 1 }
 
-if (-not $SourceDir) { $SourceDir = $PSScriptRoot }
-
-Write-Host "`n  SpanVault Updater" -ForegroundColor Blue
+Write-Host ""
+Write-Host "  SpanVault - Update" -ForegroundColor Blue
 Write-Host "  ==================" -ForegroundColor Blue
+Write-Host ""
 
-$services = @("SpanVault-SNMP","SpanVault-ICMP","SpanVault-Flow","SpanVault-Aggregator","SpanVault-API")
+# Detect server IP if not provided
+if (-not $ServerIP) {
+  $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" -and $_.IPAddress -notmatch "^169" } | Select-Object -First 1).IPAddress
+}
 
-Write-Step "Stopping SpanVault services"
+# ─── Step 1: Pull latest from GitHub ─────────────────────────────────────────
+Write-Step "Pulling latest from GitHub"
+$tempDir = "$env:TEMP\spanvault-update"
+if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir }
+git clone $RepoUrl $tempDir 2>&1 | Out-Null
+Write-OK "Downloaded latest code"
+
+# ─── Step 2: Stop services ───────────────────────────────────────────────────
+Write-Step "Stopping services"
+$services = @("SpanVault-Frontend","SpanVault-API","SpanVault-SNMP","SpanVault-ICMP","SpanVault-Flow","SpanVault-Aggregator")
 foreach ($svc in $services) {
-  try {
-    Stop-Service -Name $svc -Force -ErrorAction Stop
-    Write-OK "Stopped: $svc"
-  } catch {
-    Write-Warn "$svc was not running"
+  Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Seconds 2
+Write-OK "Services stopped"
+
+# ─── Step 3: Update backend source files ─────────────────────────────────────
+Write-Step "Updating backend files"
+$backendSrc = "$tempDir\backend\src"
+$backendDst = "$InstallDir\backend"
+
+# Copy all TypeScript source files maintaining folder structure but flattened
+Get-ChildItem "$backendSrc" -Recurse -Filter "*.ts" | ForEach-Object {
+  $relative = $_.FullName.Substring($backendSrc.Length + 1)
+  $dest = Join-Path $backendDst $relative
+  $destDir = Split-Path $dest
+  if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+  Copy-Item -Force $_.FullName $dest
+}
+Write-OK "Backend files updated"
+
+# ─── Step 4: Update scripts ───────────────────────────────────────────────────
+Write-Step "Updating database scripts"
+Copy-Item -Force "$tempDir\scripts\schema.sql" "$InstallDir\scripts\schema.sql"
+Copy-Item -Force "$tempDir\scripts\seed.sql"   "$InstallDir\scripts\seed.sql"
+Write-OK "Scripts updated"
+
+# ─── Step 5: Update frontend source files ────────────────────────────────────
+Write-Step "Updating frontend files"
+$frontendSrc = "$tempDir\frontend"
+
+# Copy all frontend source files
+Get-ChildItem "$frontendSrc" -Recurse -Exclude "node_modules",".next" | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+  $relative = $_.FullName.Substring($frontendSrc.Length + 1)
+  # Skip node_modules and .next
+  if ($relative -notmatch "^node_modules" -and $relative -notmatch "^\.next") {
+    $dest = Join-Path "$InstallDir\frontend" $relative
+    $destDir = Split-Path $dest
+    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+    Copy-Item -Force $_.FullName $dest
   }
 }
 
-Write-Step "Copying updated files"
-Copy-Item -Recurse -Force "$SourceDir\backend\*"  "$InstallDir\backend\"
-Copy-Item -Recurse -Force "$SourceDir\frontend\*" "$InstallDir\frontend\"
-Copy-Item -Force "$SourceDir\scripts\*" "$InstallDir\scripts\"
-Write-OK "Files updated"
+# Fix tsconfig paths alias
+$tsconfigPath = "$InstallDir\frontend\tsconfig.json"
+$tsconfigRaw = Get-Content $tsconfigPath -Raw
+$tsconfigRaw = $tsconfigRaw -replace '"@/\*":\s*\["./src/\*"\]', '"@/*": ["./*"]'
+Set-Content $tsconfigPath $tsconfigRaw
+Write-OK "Frontend files updated"
 
-Write-Step "Rebuilding backend"
+# ─── Step 6: Rebuild backend ─────────────────────────────────────────────────
+Write-Step "Building backend"
 Set-Location "$InstallDir\backend"
-& npm install --omit=dev 2>&1 | Out-Null
-& npm run build 2>&1 | Out-Null
-Write-OK "Backend rebuilt"
 
-Write-Step "Rebuilding frontend"
-Set-Location "$InstallDir\frontend"
-& npm install 2>&1 | Out-Null
+# Fix tsconfig for flat structure
+$backendTsconfig = @{
+  compilerOptions = @{
+    target = "ES2020"; module = "commonjs"; lib = @("ES2020")
+    outDir = "./dist"; rootDir = "./"
+    strict = $false; esModuleInterop = $true
+    skipLibCheck = $true; resolveJsonModule = $true
+  }
+  include = @("./**/*.ts")
+  exclude = @("node_modules","dist")
+} | ConvertTo-Json -Depth 5
+Set-Content "$InstallDir\backend\tsconfig.json" $backendTsconfig
 
-$config = Get-Content "$InstallDir\config.json" | ConvertFrom-Json
-$env:NEXT_PUBLIC_API_URL = "http://localhost:$($config.api.port)"
-& npm run build 2>&1 | Out-Null
-Write-OK "Frontend rebuilt"
-
-Write-Step "Applying schema updates"
-$psqlPath = Get-ChildItem "C:\Program Files\PostgreSQL" -Recurse -Filter "psql.exe" -ErrorAction SilentlyContinue |
-  Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-if ($psqlPath) {
-  $env:PGPASSWORD = $config.database.password
-  & $psqlPath -U $config.database.user -d $config.database.name -f "$InstallDir\scripts\schema.sql" 2>&1 | Out-Null
-  Write-OK "Schema updated"
-} else {
-  Write-Warn "psql not found - schema update skipped"
+npm run build 2>&1 | Out-Null
+if (-not (Test-Path "$InstallDir\backend\dist\index.js")) {
+  Write-Fail "Backend build failed"
 }
+Write-OK "Backend built"
 
-Write-Step "Starting SpanVault services"
+# ─── Step 7: Rebuild frontend ────────────────────────────────────────────────
+Write-Step "Building frontend (2-3 minutes)"
+Set-Location "$InstallDir\frontend"
+$env:NEXT_PUBLIC_API_URL = "http://$ServerIP`:$ApiPort"
+npm run build 2>&1 | Out-Null
+Write-OK "Frontend built"
+
+# ─── Step 8: Start services ──────────────────────────────────────────────────
+Write-Step "Starting services"
 foreach ($svc in $services) {
   try {
-    Start-Service -Name $svc -ErrorAction Stop
-    Write-OK "Started: $svc"
+    Start-Service -Name $svc
+    Start-Sleep -Milliseconds 500
+    Write-OK "$svc - $((Get-Service $svc).Status)"
   } catch {
-    Write-Warn "Could not start $svc - check logs at $InstallDir\logs"
+    Write-Host "    [!!] Could not start $svc" -ForegroundColor Yellow
   }
 }
 
-Write-Host "`n  Update complete. SpanVault is running at http://localhost:$($config.api.port)`n" -ForegroundColor Green
+# ─── Cleanup ─────────────────────────────────────────────────────────────────
+Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+
+Write-Host ""
+Write-Host "  SpanVault updated successfully!" -ForegroundColor Green
+Write-Host "  Dashboard: http://$ServerIP`:$FrontendPort" -ForegroundColor White
+Write-Host ""
