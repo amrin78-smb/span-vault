@@ -79,12 +79,12 @@ async function runMonitor(): Promise<void> {
   logger.info('ICMP Monitor service started');
 
   const pollCritical = async () => {
-    const targets = await query<IcmpTarget>(`SELECT id, ip_address, label, priority, device_id FROM icmp_targets WHERE enabled = TRUE AND priority = 'critical'`);
+    const targets = await query<IcmpTarget>(`SELECT id, ip_address, label, priority, device_id FROM icmp_targets WHERE enabled = TRUE AND priority IN ('critical', 'high')`);
     if (targets.length > 0) await Promise.allSettled(targets.map((t) => checkTarget(t)));
   };
 
   const pollNormal = async () => {
-    const targets = await query<IcmpTarget>(`SELECT id, ip_address, label, priority, device_id FROM icmp_targets WHERE enabled = TRUE AND priority = 'normal'`);
+    const targets = await query<IcmpTarget>(`SELECT id, ip_address, label, priority, device_id FROM icmp_targets WHERE enabled = TRUE AND priority IN ('normal', 'high')`);
     if (targets.length > 0) await Promise.allSettled(targets.map((t) => checkTarget(t)));
   };
 
