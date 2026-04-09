@@ -2,9 +2,11 @@
 
 import { Router, Request, Response } from 'express';
 import { query, queryOne } from '../../db';
+import { nvQuery } from '../../db/netvault';
 
 const router = Router();
 
+// GET /api/devices - List all devices with site info
 router.get('/', async (_req: Request, res: Response) => {
   try {
     const devices = await query(
@@ -19,6 +21,72 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/devices/netvault-import - List NetVault devices not yet in SpanVault
+router.get('/netvault-import', async (_req: Request, res: Response) => {
+  try {
+    const rows = await nvQuery(
+      `SELECT
+         d.ip_address,
+         d.name       AS hostname,
+         d.model,
+         d.site_id,
+         b.name       AS vendor,
+         dt.name      AS device_type,
+         s.name       AS site_name,
+         s.code       AS site_code
+       FROM devices d
+       LEFT JOIN brands       b  ON b.id  = d.brand_id
+       LEFT JOIN device_types dt ON dt.id = d.device_type_id
+       LEFT JOIN sites        s  ON s.id  = d.site_id
+       WHERE d.device_status = 'Active'
+         AND d.ip_address IS NOT NULL
+         AND d.ip_address != ''
+         AND d.ip_address NOT IN (SELECT ip_address::text FROM devices)
+       ORDER BY s.name, d.name`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/devices/lookup/:ip - Look up device in NetVault by IP
+router.get('/lookup/:ip', async (req: Request, res: Response) => {
+  try {
+    const rows = await nvQuery(
+      `SELECT
+         d.name       AS hostname,
+         d.model,
+         d.site_id,
+         b.name       AS vendor,
+         dt.name      AS device_type,
+         s.name       AS site_name
+       FROM devices d
+       LEFT JOIN brands       b  ON b.id  = d.brand_id
+       LEFT JOIN device_types dt ON dt.id = d.device_type_id
+       LEFT JOIN sites        s  ON s.id  = d.site_id
+       WHERE d.ip_address = $1
+         AND d.device_status = 'Active'
+       LIMIT 1`,
+      [req.params.ip]
+    );
+    if (!rows.length) return res.json({ found: false });
+    const d = rows[0];
+    res.json({
+      found:       true,
+      hostname:    d.hostname,
+      model:       d.model,
+      vendor:      d.vendor,
+      device_type: d.device_type,
+      site_id:     d.site_id,
+      site_name:   d.site_name,
+    });
+  } catch (err) {
+    res.json({ found: false });
+  }
+});
+
+// GET /api/devices/:id - Single device
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const device = await queryOne(
@@ -35,6 +103,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/devices - Add a new device
 router.post('/', async (req: Request, res: Response) => {
   const { hostname, ip_address, site_id, vendor, model, device_type, priority, community } = req.body;
   if (!hostname || !ip_address) {
@@ -72,6 +141,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// PUT /api/devices/:id - Update device
 router.put('/:id', async (req: Request, res: Response) => {
   const { hostname, ip_address, site_id, vendor, model, device_type, priority, community, snmp_enabled, icmp_enabled } = req.body;
   try {
@@ -79,7 +149,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       `UPDATE devices SET
          hostname     = COALESCE($1, hostname),
          ip_address   = COALESCE($2, ip_address),
-         site_id      = COALESCE($3, site_id),
+         site_id      = $3,
          vendor       = COALESCE($4, vendor),
          model        = COALESCE($5, model),
          device_type  = COALESCE($6, device_type),
@@ -88,7 +158,7 @@ router.put('/:id', async (req: Request, res: Response) => {
          snmp_enabled = COALESCE($9, snmp_enabled),
          icmp_enabled = COALESCE($10, icmp_enabled)
        WHERE id = $11`,
-      [hostname, ip_address, site_id, vendor, model, device_type, priority, community, snmp_enabled, icmp_enabled, req.params.id]
+      [hostname, ip_address, site_id || null, vendor, model, device_type, priority, community, snmp_enabled, icmp_enabled, req.params.id]
     );
     if (hostname || device_type) {
       await query(
@@ -105,6 +175,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /api/devices/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     await query(`DELETE FROM devices WHERE id = $1`, [req.params.id]);
@@ -115,7 +186,3 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 export default router;
-
-
-
-
