@@ -68,7 +68,7 @@ async function checkTarget(target: IcmpTarget): Promise<void> {
 async function raiseAlert(target: IcmpTarget, alertType: string, severity: string, message: string): Promise<void> {
   try {
     await query(
-      `INSERT INTO alerts (device_id, target_id, alert_type, severity, message) SELECT $1, $2, $3, $4, $5 WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE target_id = $2 AND alert_type = $3 AND resolved = FALSE)`,
+      `INSERT INTO alerts (device_id, target_id, alert_type, severity, message) SELECT $1, $2, $3::text, $4::text, $5::text WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE target_id = $2 AND alert_type = $3::text AND resolved = FALSE)`,
       [target.device_id ?? null, target.id, alertType, severity, message]
     );
   } catch {}
