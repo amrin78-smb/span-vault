@@ -24,6 +24,11 @@ router.get('/', async (_req: Request, res: Response) => {
 // GET /api/devices/netvault-import - List NetVault devices not yet in SpanVault
 router.get('/netvault-import', async (_req: Request, res: Response) => {
   try {
+    // Get existing SpanVault IPs first (strip /32 suffix from inet type)
+    const existing = await query<{ ip: string }>(`SELECT split_part(ip_address::text, '/', 1) AS ip FROM devices`);
+    const existingIPs = existing.map(r => r.ip);
+
+    // Query NetVault for all active devices with IPs
     const rows = await nvQuery(
       `SELECT
          d.ip_address,
@@ -41,10 +46,12 @@ router.get('/netvault-import', async (_req: Request, res: Response) => {
        WHERE d.device_status = 'Active'
          AND d.ip_address IS NOT NULL
          AND d.ip_address != ''
-         AND d.ip_address NOT IN (SELECT host(ip_address) FROM devices)
        ORDER BY s.name, d.name`
     );
-    res.json(rows);
+
+    // Filter out IPs already in SpanVault
+    const filtered = rows.filter(r => !existingIPs.includes(r.ip_address));
+    res.json(filtered);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
