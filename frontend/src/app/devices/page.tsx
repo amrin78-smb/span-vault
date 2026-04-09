@@ -15,6 +15,137 @@ interface DeviceIcmp { device_id:number; avg_latency_ms:number|null; avg_packet_
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+
+interface NVDevice {
+  ip_address: string; hostname: string; model: string; vendor: string;
+  device_type: string; site_id: number; site_name: string; site_code: string;
+}
+
+function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [devices, setDevices] = useState<NVDevice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+  const [err, setErr] = useState('');
+  const [done, setDone] = useState(0);
+
+  useState(() => {
+    fetch(`${API}/api/devices/netvault-import`)
+      .then(r => r.json())
+      .then(data => { setDevices(data); setLoading(false); })
+      .catch(() => { setErr('Failed to load NetVault devices'); setLoading(false); });
+  });
+
+  function toggle(ip: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(ip) ? next.delete(ip) : next.add(ip);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected(prev => prev.size === devices.length ? new Set() : new Set(devices.map(d => d.ip_address)));
+  }
+
+  async function importSelected() {
+    if (!selected.size) return;
+    setImporting(true);
+    let count = 0;
+    for (const ip of Array.from(selected)) {
+      const d = devices.find(x => x.ip_address === ip);
+      if (!d) continue;
+      try {
+        await fetch(`${API}/api/devices`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            hostname: d.hostname, ip_address: d.ip_address,
+            vendor: d.vendor, model: d.model,
+            device_type: (d.device_type||'router').toLowerCase(),
+            site_id: d.site_id, priority: 'normal', community: 'public',
+          }),
+        });
+        count++;
+      } catch {}
+    }
+    setDone(count);
+    setImporting(false);
+    onSaved();
+    onClose();
+  }
+
+  const bysite = devices.reduce((acc, d) => {
+    const k = d.site_name || 'No Site';
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(d);
+    return acc;
+  }, {} as Record<string, NVDevice[]>);
+
+  return (
+    <Modal title="Import from NetVault" onClose={onClose} width={720}>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: C.muted }}>Loading NetVault devices…</div>
+      ) : err ? (
+        <div style={{ color: C.crit, padding: 16 }}>{err}</div>
+      ) : devices.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: C.muted }}>
+          All NetVault devices are already in SpanVault.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <span style={{ fontSize: 13, color: C.muted }}>{devices.length} devices available · {selected.size} selected</span>
+            <Btn onClick={toggleAll}>{selected.size === devices.length ? 'Deselect All' : 'Select All'}</Btn>
+          </div>
+          <div style={{ maxHeight: 400, overflowY: 'auto', border: `1px solid ${C.border}` }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#f8f9fa', zIndex: 1 }}>
+                <tr>
+                  <th style={{ width: 40, padding: '8px 12px', borderBottom: `2px solid ${C.border}` }}/>
+                  {['Hostname', 'IP Address', 'Vendor / Model', 'Site'].map(h => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: `2px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(bysite).map(([site, devs]) => (
+                  <>
+                    <tr key={`site-${site}`}>
+                      <td colSpan={5} style={{ padding: '6px 12px', fontSize: 11, fontWeight: 700, color: C.info, background: '#f0f4ff', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{site}</td>
+                    </tr>
+                    {devs.map((d, i) => (
+                      <tr key={d.ip_address}
+                        onClick={() => toggle(d.ip_address)}
+                        style={{ cursor: 'pointer', background: selected.has(d.ip_address) ? '#f0fdf4' : i % 2 === 0 ? '#fff' : '#fafbfc' }}
+                      >
+                        <td style={{ padding: '10px 12px', borderTop: `1px solid ${C.border}` }}>
+                          <input type="checkbox" checked={selected.has(d.ip_address)} onChange={() => toggle(d.ip_address)} onClick={e => e.stopPropagation()}/>
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text, borderTop: `1px solid ${C.border}` }}>{d.hostname || '—'}</td>
+                        <td style={{ padding: '10px 12px', fontSize: 12, fontFamily: C.mono, color: C.sub, borderTop: `1px solid ${C.border}` }}>{d.ip_address}</td>
+                        <td style={{ padding: '10px 12px', fontSize: 12, color: C.sub, borderTop: `1px solid ${C.border}` }}>{[d.vendor, d.model].filter(Boolean).join(' ') || '—'}</td>
+                        <td style={{ padding: '10px 12px', fontSize: 12, color: C.muted, borderTop: `1px solid ${C.border}` }}>{d.site_name || '—'}</td>
+                      </tr>
+                    ))}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {err && <p style={{ marginTop: 12, color: C.crit, fontSize: 13 }}>{err}</p>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+            <Btn onClick={onClose}>Cancel</Btn>
+            <Btn variant="primary" onClick={importSelected} disabled={!selected.size || importing}>
+              {importing ? `Importing…` : `Import ${selected.size} Device${selected.size !== 1 ? 's' : ''}`}
+            </Btn>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function DevModal({device,sites,onClose,onSaved}:{device:Device|null;sites:Site[];onClose:()=>void;onSaved:()=>void}) {
   const [f,setF]=useState<F>(device?{hostname:device.hostname,ip_address:device.ip_address,site_id:String(device.site_id??''),vendor:device.vendor??'',model:device.model??'',device_type:device.device_type??'router',priority:device.priority??'normal',community:'public'}:{...BLANK});
   const [saving,setSaving]=useState(false);
@@ -121,6 +252,7 @@ export default function DevicesPage() {
   const {data:icmpData}=useSWR<DeviceIcmp[]>('devices-icmp',()=>fetch(`${process.env.NEXT_PUBLIC_API_URL||'http://localhost:3001'}/api/metrics/devices-icmp`).then(r=>r.json()),{refreshInterval:30000});
 
   const [modal,setModal]=useState<'add'|Device|null>(null);
+  const [showImport,setShowImport]=useState(false);
   const [confirm,setConfirm]=useState<Device|null>(null);
   const [search,setSearch]=useState('');
   const [typeF,setTypeF]=useState('all');
@@ -139,7 +271,7 @@ export default function DevicesPage() {
   return (
     <div style={{display:'flex',flexDirection:'column',gap:24}}>
       <PageHeader title="Devices" sub={`${devices?.length??0} monitored · ${up} up · ${down} down`}
-        right={<Btn variant="primary" onClick={()=>setModal('add')}>+ Add Device</Btn>} />
+        right={<div style={{display:'flex',gap:8}}><Btn onClick={()=>setShowImport(true)}>⬇ Import from NetVault</Btn><Btn variant="primary" onClick={()=>setModal('add')}>+ Add Device</Btn></div>} />
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:2}}>
         <KpiTile label="Total"   value={devices?.length??'—'} color={C.info}/>
@@ -190,6 +322,7 @@ export default function DevicesPage() {
         )}
       </Card>
 
+      {showImport&&<ImportModal onClose={()=>setShowImport(false)} onSaved={()=>mutate()}/> }
       {modal&&<DevModal device={modal==='add'?null:modal} sites={sites||[]} onClose={()=>setModal(null)} onSaved={()=>mutate()}/>}
       {confirm&&<ConfDel hostname={confirm.hostname} onConfirm={()=>del(confirm)} onCancel={()=>setConfirm(null)}/>}
     </div>
