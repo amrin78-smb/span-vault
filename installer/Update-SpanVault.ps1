@@ -111,7 +111,8 @@ Set-Content "$InstallDir\frontend\tsconfig.json" $tsconfigRaw
 
 # Remove output: standalone from next.config.js (causes silent build hangs on Windows)
 $nextConfig = Get-Content "$InstallDir\frontend\next.config.js" -Raw
-$nextConfig  = $nextConfig -replace "output:\s*['\"]standalone['\"],?\s*", ""
+# Remove output: standalone (causes silent build hangs on Windows)
+$nextConfig  = $nextConfig -replace 'output[^,]*standalone[^,]*,?', ''
 Set-Content "$InstallDir\frontend\next.config.js" $nextConfig
 
 Write-OK "Frontend source updated"
