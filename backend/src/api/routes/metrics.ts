@@ -123,3 +123,15 @@ router.get('/devices-icmp', async (_req: Request, res: Response) => {
     res.status(500).json({ error: (err as Error).message });
   }
 });
+
+// GET /api/metrics/icmp-targets - List all ICMP targets
+router.get('/icmp-targets', async (_req: Request, res: Response) => {
+  try {
+    const rows = await query(
+      `SELECT id, device_id, label, ip_address, priority FROM icmp_targets WHERE enabled = TRUE ORDER BY device_id NULLS LAST, id`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
