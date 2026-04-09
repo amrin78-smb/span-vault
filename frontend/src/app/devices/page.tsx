@@ -60,13 +60,23 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       const d = devices.find(x => x.ip_address === ip);
       if (!d) continue;
       try {
+        // Normalize device_type to SpanVault values
+        const rawType = (d.device_type||'').toLowerCase();
+        let device_type = 'router';
+        if (rawType.includes('firewall')) device_type = 'firewall';
+        else if (rawType.includes('switch')) device_type = 'switch';
+        else if (rawType.includes('access point') || rawType.includes('ap') || rawType === 'ap') device_type = 'ap';
+        else if (rawType.includes('server')) device_type = 'server';
+        else if (rawType.includes('router')) device_type = 'router';
+
         await fetch(`${API}/api/devices`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            hostname: d.hostname, ip_address: d.ip_address,
+            hostname: d.hostname || d.ip_address,
+            ip_address: d.ip_address,
             vendor: d.vendor, model: d.model,
-            device_type: (d.device_type||'router').toLowerCase(),
+            device_type,
             site_id: d.site_id, priority: 'normal', community: 'public',
           }),
         });
