@@ -109,11 +109,11 @@ router.get('/devices-icmp', async (_req: Request, res: Response) => {
     const rows = await query(
       `SELECT
          d.id AS device_id,
-         ROUND(AVG(im.latency_ms)::numeric, 1)   AS avg_latency_ms,
-         ROUND(AVG(im.packet_loss)::numeric, 1)   AS avg_packet_loss,
-         MAX(im.status)                            AS last_status
+         ROUND(AVG(im.latency_ms)::numeric, 1)        AS avg_latency_ms,
+         ROUND(AVG(im.packet_loss)::numeric, 1)        AS avg_packet_loss,
+         (array_agg(im.status ORDER BY im.time DESC))[1] AS last_status
        FROM devices d
-       LEFT JOIN icmp_targets t ON t.device_id = d.id
+       JOIN icmp_targets t ON t.device_id = d.id
        LEFT JOIN icmp_metrics im ON im.target_id = t.id
          AND im.time > NOW() - INTERVAL '15 minutes'
        GROUP BY d.id`
