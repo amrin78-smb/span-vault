@@ -7,6 +7,7 @@ const NAV = [
   { href: '/',         label: 'Dashboard',  icon: '▦' },
   { href: '/topology', label: 'Topology',   icon: '◈' },
   { href: '/devices',  label: 'Devices',    icon: '⬡' },
+  { href: '/sites',    label: 'Sites',      icon: '⊕' },
   { href: '/alerts',   label: 'Alerts',     icon: '⚑' },
   { href: '/flows',    label: 'Flows',      icon: '⇄' },
 ];
