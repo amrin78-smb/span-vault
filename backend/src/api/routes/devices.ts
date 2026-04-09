@@ -156,3 +156,35 @@ router.get('/lookup/:ip', async (req: Request, res: Response) => {
     res.json({ found: false });
   }
 });
+
+// GET /api/devices/netvault-import - List NetVault devices not yet in SpanVault
+router.get('/netvault-import', async (_req: Request, res: Response) => {
+  try {
+    const { nvQuery } = await import('../../db/netvault');
+    const rows = await nvQuery(
+      `SELECT
+         d.ip_address,
+         d.name       AS hostname,
+         d.model,
+         d.site_id,
+         b.name       AS vendor,
+         dt.name      AS device_type,
+         s.name       AS site_name,
+         s.code       AS site_code
+       FROM devices d
+       LEFT JOIN brands       b  ON b.id  = d.brand_id
+       LEFT JOIN device_types dt ON dt.id = d.device_type_id
+       LEFT JOIN sites        s  ON s.id  = d.site_id
+       WHERE d.device_status = 'Active'
+         AND d.ip_address IS NOT NULL
+         AND d.ip_address != ''
+         AND d.ip_address NOT IN (
+           SELECT ip_address::text FROM devices
+         )
+       ORDER BY s.name, d.name`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
