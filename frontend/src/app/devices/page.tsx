@@ -28,6 +28,7 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   const [importing, setImporting] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState(0);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     fetch(`${API}/api/devices/netvault-import`)
@@ -45,7 +46,10 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   }
 
   function toggleAll() {
-    setSelected(prev => prev.size === devices.length ? new Set() : new Set(devices.map(d => d.ip_address)));
+    setSelected(prev => {
+      const allSelected = prev.size === devices.length;
+      return allSelected ? new Set() : new Set(devices.map(d => d.ip_address));
+    });
   }
 
   async function importSelected() {
@@ -75,7 +79,17 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
     onClose();
   }
 
-  const bysite = devices.reduce((acc, d) => {
+  const filtered = search
+    ? devices.filter(d => {
+        const q = search.toLowerCase();
+        return (d.hostname||'').toLowerCase().includes(q) ||
+               (d.ip_address||'').includes(q) ||
+               (d.site_name||'').toLowerCase().includes(q) ||
+               (d.vendor||'').toLowerCase().includes(q);
+      })
+    : devices;
+
+  const bysite = filtered.reduce((acc, d) => {
     const k = d.site_name || 'No Site';
     if (!acc[k]) acc[k] = [];
     acc[k].push(d);
@@ -94,9 +108,19 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <span style={{ fontSize: 13, color: C.muted }}>{devices.length} devices available · {selected.size} selected</span>
-            <Btn onClick={toggleAll}>{selected.size === devices.length ? 'Deselect All' : 'Select All'}</Btn>
+          <div style={{ marginBottom: 12 }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search hostname, IP, site, vendor…"
+              style={{ width: '100%', padding: '9px 14px', border: `1px solid ${C.border}`, fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }}
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span style={{ fontSize: 13, color: C.muted }}>
+              {filtered.length} of {devices.length} devices · {selected.size} selected
+            </span>
+            <Btn onClick={toggleAll}>{selected.size === filtered.length && filtered.length > 0 ? 'Deselect All' : 'Select All'}</Btn>
           </div>
           <div style={{ maxHeight: 400, overflowY: 'auto', border: `1px solid ${C.border}` }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
