@@ -135,3 +135,73 @@ router.get('/icmp-targets', async (_req: Request, res: Response) => {
     res.status(500).json({ error: (err as Error).message });
   }
 });
+
+// GET /api/metrics/device/:id - Full device metrics summary (target_id + recent stats)
+router.get('/device/:id', async (req: Request, res: Response) => {
+  try {
+    const deviceId = req.params.id;
+
+    const [device, target, recentIcmp, alerts] = await Promise.all([
+      query(`SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = $1`, [deviceId]),
+      query(`SELECT id, ip_address, label, priority FROM icmp_targets WHERE device_id = $1 LIMIT 1`, [deviceId]),
+      query(`SELECT
+               ROUND(AVG(latency_ms)::numeric, 2)  AS avg_latency_ms,
+               ROUND(MIN(latency_ms)::numeric, 2)  AS min_latency_ms,
+               ROUND(MAX(latency_ms)::numeric, 2)  AS max_latency_ms,
+               ROUND(AVG(packet_loss)::numeric, 1) AS avg_packet_loss,
+               COUNT(*) FILTER (WHERE status = 'up')   AS checks_up,
+               COUNT(*) FILTER (WHERE status = 'down') AS checks_down,
+               COUNT(*) AS total_checks
+             FROM icmp_metrics im
+             JOIN icmp_targets it ON it.id = im.target_id
+             WHERE it.device_id = $1
+               AND im.time > NOW() - INTERVAL '1 hour'`, [deviceId]),
+      query(`SELECT id, alert_type, severity, message, acknowledged, resolved, created_at
+             FROM alerts WHERE device_id = $1 ORDER BY created_at DESC LIMIT 10`, [deviceId]),
+    ]);
+
+    if (!device.length) return res.status(404).json({ error: 'Device not found' });
+
+    res.json({
+      device:    device[0],
+      target:    target[0] || null,
+      icmp:      recentIcmp[0] || null,
+      alerts,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/metrics/icmp-targets - List all ICMP targets
+router.get('/icmp-targets', async (_req: Request, res: Response) => {
+  try {
+    const rows = await query(
+      `SELECT id, device_id, label, ip_address, priority FROM icmp_targets WHERE enabled = TRUE ORDER BY device_id NULLS LAST, id`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/metrics/devices-icmp - Latest ICMP stats for all devices
+router.get('/devices-icmp', async (_req: Request, res: Response) => {
+  try {
+    const rows = await query(
+      `SELECT
+         d.id AS device_id,
+         ROUND(AVG(im.latency_ms)::numeric, 1)        AS avg_latency_ms,
+         ROUND(AVG(im.packet_loss)::numeric, 1)        AS avg_packet_loss,
+         (array_agg(im.status ORDER BY im.time DESC))[1] AS last_status
+       FROM devices d
+       JOIN icmp_targets t ON t.device_id = d.id
+       LEFT JOIN icmp_metrics im ON im.target_id = t.id
+         AND im.time > NOW() - INTERVAL '15 minutes'
+       GROUP BY d.id`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
