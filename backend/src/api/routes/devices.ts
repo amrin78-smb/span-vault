@@ -41,7 +41,7 @@ router.get('/netvault-import', async (_req: Request, res: Response) => {
        WHERE d.device_status = 'Active'
          AND d.ip_address IS NOT NULL
          AND d.ip_address != ''
-         AND d.ip_address NOT IN (SELECT ip_address::text FROM devices)
+         AND d.ip_address NOT IN (SELECT host(ip_address) FROM devices)
        ORDER BY s.name, d.name`
     );
     res.json(rows);
