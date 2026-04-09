@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { api, Device, Site } from '@/lib/api';
 import { format } from 'date-fns';
@@ -29,12 +29,12 @@ function ImportModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   const [err, setErr] = useState('');
   const [done, setDone] = useState(0);
 
-  useState(() => {
+  useEffect(() => {
     fetch(`${API}/api/devices/netvault-import`)
       .then(r => r.json())
       .then(data => { setDevices(data); setLoading(false); })
       .catch(() => { setErr('Failed to load NetVault devices'); setLoading(false); });
-  });
+  }, []);
 
   function toggle(ip: string) {
     setSelected(prev => {
