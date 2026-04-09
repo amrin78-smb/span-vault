@@ -13,11 +13,41 @@ const BLANK:F={hostname:'',ip_address:'',site_id:'',vendor:'',model:'',device_ty
 
 interface DeviceIcmp { device_id:number; avg_latency_ms:number|null; avg_packet_loss:number|null; last_status:string|null; }
 
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
 function DevModal({device,sites,onClose,onSaved}:{device:Device|null;sites:Site[];onClose:()=>void;onSaved:()=>void}) {
   const [f,setF]=useState<F>(device?{hostname:device.hostname,ip_address:device.ip_address,site_id:String(device.site_id??''),vendor:device.vendor??'',model:device.model??'',device_type:device.device_type??'router',priority:device.priority??'normal',community:'public'}:{...BLANK});
   const [saving,setSaving]=useState(false);
+  const [looking,setLooking]=useState(false);
+  const [lookupMsg,setLookupMsg]=useState('');
   const [err,setErr]=useState('');
   const set=(k:keyof F)=>(v:string)=>setF(p=>({...p,[k]:v}));
+
+  async function lookupIP(ip: string) {
+    if (!ip || device) return; // only on add, not edit
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipRegex.test(ip)) return;
+    setLooking(true);
+    setLookupMsg('');
+    try {
+      const res = await fetch(`${API}/api/devices/lookup/${ip}`);
+      const data = await res.json();
+      if (data.found) {
+        setF(p => ({
+          ...p,
+          hostname:    data.hostname    || p.hostname,
+          vendor:      data.vendor      || p.vendor,
+          model:       data.model       || p.model,
+          device_type: data.device_type?.toLowerCase() || p.device_type,
+          site_id:     data.site_id     ? String(data.site_id) : p.site_id,
+        }));
+        setLookupMsg(`✓ Found in NetVault: ${data.hostname} (${data.site_name||'no site'})`);
+      } else {
+        setLookupMsg('Not found in NetVault — fill in details manually');
+      }
+    } catch { setLookupMsg('NetVault lookup unavailable'); }
+    finally { setLooking(false); }
+  }
   async function submit(){
     if(!f.hostname||!f.ip_address){setErr('Hostname and IP required');return;}
     setSaving(true);
@@ -28,7 +58,12 @@ function DevModal({device,sites,onClose,onSaved}:{device:Device|null;sites:Site[
     <Modal title={device?`Edit — ${device.hostname}`:'Add Device'} onClose={onClose}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
         <div style={{gridColumn:'span 2'}}><Field label="Hostname"><Input value={f.hostname} onChange={set('hostname')} placeholder="hq-fw-01"/></Field></div>
-        <Field label="IP Address"><Input value={f.ip_address} onChange={set('ip_address')} placeholder="10.1.1.1"/></Field>
+        <Field label="IP Address"><Input value={f.ip_address} onChange={set('ip_address')} onBlur={(v:string)=>lookupIP(v)} placeholder="10.1.1.1"/></Field>
+        {!device && lookupMsg && (
+          <div style={{gridColumn:'span 2',fontSize:12,padding:'6px 10px',background:lookupMsg.startsWith('✓')?'#f0fdf4':'#fafafa',borderLeft:`3px solid ${lookupMsg.startsWith('✓')?'#16a34a':'#94a3b8'}`}}>
+            {looking ? '🔍 Looking up in NetVault…' : lookupMsg}
+          </div>
+        )}
         <Field label="Site"><Select value={f.site_id} onChange={set('site_id')} options={sites.map(s=>({value:s.id,label:s.name}))}/></Field>
         <Field label="Vendor"><Input value={f.vendor} onChange={set('vendor')} placeholder="Cisco"/></Field>
         <Field label="Model"><Input value={f.model} onChange={set('model')} placeholder="ASR 1001-X"/></Field>

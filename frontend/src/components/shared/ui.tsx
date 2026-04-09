@@ -89,11 +89,11 @@ export function UtilBar({ pct }: { pct: number }) {
   );
 }
 
-export function Input({ value, onChange, placeholder, style }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; style?: React.CSSProperties;
+export function Input({ value, onChange, onBlur, placeholder, style }: {
+  value: string; onChange: (v: string) => void; onBlur?: (v: string) => void; placeholder?: string; style?: React.CSSProperties;
 }) {
   return (
-    <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    <input value={value} onChange={e => onChange(e.target.value)} onBlur={e => onBlur?.(e.target.value)} placeholder={placeholder}
       style={{ width: '100%', background: '#fff', border: `1px solid ${C.border2}`, borderRadius: 0, padding: '10px 14px', color: C.text, fontFamily: "'DM Sans', sans-serif", fontSize: 14, outline: 'none', ...style }}
       onFocus={e => e.target.style.borderColor = C.accent}
       onBlur={e  => e.target.style.borderColor = C.border2}
