@@ -31,16 +31,17 @@ if (-not $ServerIP) {
   Write-OK "Auto-detected server IP: $ServerIP"
 }
 
-# Read existing config for DB credentials
+# Read existing config
 $configPath = "$InstallDir\config.json"
-if (-not (Test-Path $configPath)) { Write-Fail "config.json not found at $configPath. Run installer first." }
+if (-not (Test-Path $configPath)) { Write-Fail "config.json not found. Run installer first." }
 $config = Get-Content $configPath | ConvertFrom-Json
 
 # ─── Step 1: Pull latest from GitHub ─────────────────────────────────────────
 Write-Step "Pulling latest from GitHub"
 $tempDir = "$env:TEMP\spanvault-update"
 if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir }
-$oldPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$oldPref = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
 & git clone $RepoUrl $tempDir 2>&1 | Out-Null
 $ErrorActionPreference = $oldPref
 if (-not (Test-Path "$tempDir\backend")) { Write-Fail "Git clone failed. Check internet connection." }
@@ -55,7 +56,7 @@ foreach ($svc in $allServices) {
 Start-Sleep -Seconds 2
 Write-OK "Services stopped"
 
-# ─── Step 3: Update backend files (src/ → flat) ──────────────────────────────
+# ─── Step 3: Update backend files (src/ to flat) ─────────────────────────────
 Write-Step "Updating backend files"
 $backendSrc = "$tempDir\backend\src"
 Get-ChildItem $backendSrc -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
@@ -66,7 +67,7 @@ Get-ChildItem $backendSrc -Recurse | Where-Object { -not $_.PSIsContainer } | Fo
 }
 Write-OK "Backend source updated"
 
-# ─── Step 4: Update frontend files (src/app → app, src/components → components, src/lib → lib) ──
+# ─── Step 4: Update frontend files (src/app to app, etc.) ────────────────────
 Write-Step "Updating frontend files"
 $frontendSrc = "$tempDir\frontend\src"
 
@@ -109,11 +110,10 @@ $tsconfigRaw = Get-Content "$InstallDir\frontend\tsconfig.json" -Raw
 $tsconfigRaw = $tsconfigRaw -replace '"@/\*":\s*\["./src/\*"\]', '"@/*": ["./*"]'
 Set-Content "$InstallDir\frontend\tsconfig.json" $tsconfigRaw
 
-# Remove output: standalone from next.config.js (causes silent build hangs on Windows)
-$nextConfig = Get-Content "$InstallDir\frontend\next.config.js" -Raw
-# Remove output: standalone (causes silent build hangs on Windows)
-$nextConfig  = $nextConfig -replace 'output[^,]*standalone[^,]*,?', ''
-Set-Content "$InstallDir\frontend\next.config.js" $nextConfig
+# Remove output standalone from next.config.js - causes silent build hangs on Windows
+$nextConfigRaw = Get-Content "$InstallDir\frontend\next.config.js" -Raw
+$nextConfigRaw = $nextConfigRaw -replace 'output[^,\n]*standalone[^,\n]*,?', ''
+Set-Content "$InstallDir\frontend\next.config.js" $nextConfigRaw
 
 Write-OK "Frontend source updated"
 
@@ -129,22 +129,21 @@ $psqlPath = Get-ChildItem "C:\Program Files\PostgreSQL" -Recurse -Filter "psql.e
 if ($psqlPath) {
   $env:PGPASSWORD = $config.database.password
   $env:PGOPTIONS  = "--client-min-messages=warning"
-  $oldPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $oldPref = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
   & $psqlPath -U $config.database.user -d $config.database.name -v ON_ERROR_STOP=0 -f "$InstallDir\scripts\schema.sql" 2>&1 | Out-Null
-  # Drop FK constraints that conflict with NetVault site IDs
   & $psqlPath -U $config.database.user -d $config.database.name -c "ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_site_id_fkey" 2>&1 | Out-Null
   & $psqlPath -U $config.database.user -d $config.database.name -c "ALTER TABLE topology_nodes DROP CONSTRAINT IF EXISTS topology_nodes_site_id_fkey" 2>&1 | Out-Null
   $ErrorActionPreference = $oldPref
   Write-OK "Schema updated"
 } else {
-  Write-Warn "psql not found — schema update skipped"
+  Write-Warn "psql not found - schema update skipped"
 }
 
 # ─── Step 7: Rebuild backend ──────────────────────────────────────────────────
 Write-Step "Building backend"
 Set-Location "$InstallDir\backend"
 
-# Fix tsconfig for flat structure
 @{
   compilerOptions = @{
     target="ES2020"; module="commonjs"; lib=@("ES2020")
@@ -157,37 +156,36 @@ Set-Location "$InstallDir\backend"
 
 & npm run build 2>&1 | Out-Null
 if (-not (Test-Path "$InstallDir\backend\dist\index.js")) {
-  Write-Fail "Backend build failed — dist\index.js not found. Check source files."
+  Write-Fail "Backend build failed - dist\index.js not found"
 }
 Write-OK "Backend built"
 
 # ─── Step 8: Rebuild frontend ────────────────────────────────────────────────
 Write-Step "Building frontend (2-3 minutes)"
 Set-Location "$InstallDir\frontend"
-Write-Host "    API URL: http://$ServerIP`:$($config.api.port)" -ForegroundColor Gray
 $env:NEXT_PUBLIC_API_URL = "http://$ServerIP`:$($config.api.port)"
+Write-Host "    API URL: $env:NEXT_PUBLIC_API_URL" -ForegroundColor Gray
 & npm run build 2>&1 | Out-Null
 if (-not (Test-Path "$InstallDir\frontend\.next\BUILD_ID")) {
-  Write-Fail "Frontend build failed — .next\BUILD_ID not found."
+  Write-Fail "Frontend build failed - .next\BUILD_ID not found"
 }
 Write-OK "Frontend built"
 
 # ─── Step 9: Start services ───────────────────────────────────────────────────
 Write-Step "Starting services"
-# Start backend services first, then frontend
 $startOrder = @("SpanVault-SNMP","SpanVault-ICMP","SpanVault-Flow","SpanVault-Aggregator","SpanVault-API","SpanVault-Frontend")
 foreach ($svc in $startOrder) {
   try {
     Start-Service -Name $svc
     Start-Sleep -Milliseconds 800
     $status = (Get-Service -Name $svc).Status
-    Write-OK "$svc — $status"
+    Write-OK "$svc - $status"
   } catch {
-    Write-Warn "Could not start $svc — check $InstallDir\logs\$svc-error.log"
+    Write-Warn "Could not start $svc - check $InstallDir\logs\$svc-error.log"
   }
 }
 
-# ─── Cleanup ──────────────────────────────────────────────────────────────────
+# Cleanup
 Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
 
 Write-Host ""
