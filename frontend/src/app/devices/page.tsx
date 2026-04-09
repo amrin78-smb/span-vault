@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { api, Device, Site } from '@/lib/api';
