@@ -115,7 +115,7 @@ router.get('/devices-icmp', async (_req: Request, res: Response) => {
        FROM devices d
        LEFT JOIN icmp_targets t ON t.device_id = d.id
        LEFT JOIN icmp_metrics im ON im.target_id = t.id
-         AND im.time > NOW() - INTERVAL '5 minutes'
+         AND im.time > NOW() - INTERVAL '15 minutes'
        GROUP BY d.id`
     );
     res.json(rows);
